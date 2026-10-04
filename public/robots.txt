@@ -1,0 +1,6 @@
+# robots.txt for KuzeHentai
+User-agent: *
+Allow: /
+
+# Sitemap
+Sitemap: https://ais-pre-wskkpymerj44fz7l7axeea-179774765911.us-east1.run.app/sitemap.xml

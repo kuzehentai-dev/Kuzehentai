@@ -1,0 +1,84 @@
+{
+  "entities": {
+    "Anime": {
+      "title": "Anime",
+      "description": "Anime catalog entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "image": { "type": "string" },
+        "coverData": { "type": "string" },
+        "studioId": { "type": "string" },
+        "genreIds": { "type": "array", "items": { "type": "string" } },
+        "year": { "type": "string" },
+        "status": { "type": "string" },
+        "telegramUrl": { "type": "string" },
+        "description": { "type": "string" },
+        "hidden": { "type": "boolean" },
+        "order": { "type": "number" },
+        "downloads": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "Studio": {
+      "title": "Studio",
+      "description": "Anime animation studio",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "order": { "type": "number" }
+      },
+      "required": ["id", "name"]
+    },
+    "Genre": {
+      "title": "Genre",
+      "description": "Anime genre category",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "order": { "type": "number" }
+      },
+      "required": ["id", "name"]
+    },
+    "UserList": {
+      "title": "UserList",
+      "description": "User saved favorites list",
+      "type": "object",
+      "properties": {
+        "deviceId": { "type": "string" },
+        "animeIds": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "Username": {
+      "title": "Username",
+      "description": "Unique username reservations",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string", "maxLength": 10 },
+        "displayNameLower": { "type": "string", "maxLength": 10 },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "displayName"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Registered user profile and metadata",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string", "maxLength": 10 },
+        "displayNameLower": { "type": "string", "maxLength": 10 },
+        "email": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    }
+  }
+}

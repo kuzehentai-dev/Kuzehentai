@@ -1,0 +1,235 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --font-display: "Space Grotesk", sans-serif;
+
+  --color-brand-red: #a855f7;
+  --color-brand-red-hover: #9333ea;
+  --color-dark-bg: #0e091b;
+  --color-dark-card: #150d26;
+  --color-dark-border: #2b1848;
+  --color-dark-border-hover: #482875;
+}
+
+:root, [data-theme="default"] {
+  --theme-bg: #0e091b;
+  --theme-text: #ffffff;
+  color-scheme: dark;
+}
+
+[data-theme="black"] {
+  --theme-bg: #000000;
+  --theme-text: #f3f4f6;
+  color-scheme: dark;
+}
+
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-top: 0 !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background-color: var(--theme-bg, #0e091b) !important;
+    color: var(--theme-text, #ffffff) !important;
+    font-family: var(--font-sans);
+    -webkit-tap-highlight-color: transparent;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    scroll-behavior: smooth;
+    overscroll-behavior-y: auto;
+  }
+
+  /* Performance utilities for ultra-smooth rendering */
+  .gpu-layer {
+    transform: translateZ(0);
+    will-change: transform, opacity;
+    backface-visibility: hidden;
+  }
+
+  .card-render-optimize {
+    content-visibility: auto;
+    contain-intrinsic-size: 1px 260px;
+  }
+
+  #root {
+    min-height: 100vh;
+    background-color: var(--theme-bg, #0e091b) !important;
+    color: var(--theme-text, #ffffff);
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-top: 0 !important;
+    outline: none !important;
+  }
+
+  nav, header, main {
+    border-top: none !important;
+    border-top-width: 0 !important;
+    outline: none !important;
+  }
+
+  /* Hide scrollbars visually everywhere while retaining full scroll functionality */
+  * {
+    scrollbar-width: none !important; /* Firefox */
+    -ms-overflow-style: none !important; /* IE and Edge */
+  }
+
+  *::-webkit-scrollbar {
+    display: none !important; /* Chrome, Safari, Opera */
+    width: 0 !important;
+    height: 0 !important;
+    background: transparent !important;
+  }
+}
+
+/* ==========================================================================
+   THEME: BLACK (OLED / Pitch Black)
+   ========================================================================== */
+[data-theme="black"] {
+  background-color: #000000 !important;
+  color: #f3f4f6 !important;
+}
+
+[data-theme="black"] body,
+[data-theme="black"] #root {
+  background-color: #000000 !important;
+  color: #f3f4f6 !important;
+}
+
+/* Background containers */
+[data-theme="black"] .bg-dark-bg,
+[data-theme="black"] .bg-\[\#12091c\],
+[data-theme="black"] .bg-\[\#08080a\],
+[data-theme="black"] .bg-\[\#0a0512\] {
+  background-color: #000000 !important;
+}
+
+/* Navigation & Header */
+[data-theme="black"] nav,
+[data-theme="black"] header {
+  background-color: #000000 !important;
+  border-bottom: 1px solid #1a1a20 !important;
+}
+
+/* Search bar & Filter trigger */
+[data-theme="black"] .bg-\[\#120a1f\],
+[data-theme="black"] .bg-\[\#090514\] {
+  background-color: #08080a !important;
+  border-color: #202028 !important;
+}
+
+/* Cards & Surface panels */
+[data-theme="black"] .bg-dark-card,
+[data-theme="black"] .bg-\[\#180e26\],
+[data-theme="black"] .bg-\[\#180f26\],
+[data-theme="black"] .bg-\[\#1c112b\],
+[data-theme="black"] .bg-\[\#15121e\],
+[data-theme="black"] .bg-\[\#201733\],
+[data-theme="black"] .bg-\[\#120b1c\],
+[data-theme="black"] .bg-\[\#0c0614\] {
+  background-color: #08080a !important;
+}
+
+/* Borders */
+[data-theme="black"] .border-dark-border,
+[data-theme="black"] .border-purple-900\/50,
+[data-theme="black"] .border-purple-900\/40,
+[data-theme="black"] .border-purple-900\/60,
+[data-theme="black"] .border-purple-900\/30,
+[data-theme="black"] .border-\[\#272236\],
+[data-theme="black"] .border-\[\#372854\] {
+  border-color: #1a1a22 !important;
+}
+
+/* Footer */
+[data-theme="black"] footer {
+  background-color: #000000 !important;
+  border-top: 1px solid #1a1a20 !important;
+}
+
+/* Strict Rules for Internet Archive Embedded Player (Building Logo, Share, Embed Code, Extra Options) */
+#ia-logo,
+.ia-logo,
+.ia-header,
+.ia-top-bar,
+.ia-bar,
+.ia-share-btn,
+.ia-embed-btn,
+.ia-options-bar,
+.ia-extra-options,
+.jw-flag-share,
+.jw-icon-share,
+.jw-icon-embed,
+.jw-option,
+.jw-related-btn,
+.jw-button-container .jw-icon-share,
+.jw-button-container .jw-icon-embed,
+.jw-button-container .jw-icon-hd,
+.jw-svg-icon-share,
+.jw-svg-icon-embed,
+.web-embed-button,
+[aria-label="Share"],
+[aria-label="Embed"],
+[title="Share"],
+[title="Embed"],
+[title*="Internet Archive"],
+a[href*="archive.org/details"],
+a[href*="archive.org/embed"],
+.ia-blocked-button {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+/* Internet Archive Container Masking & Touch Protection */
+.ia-player-wrapper {
+  position: relative;
+  overflow: hidden !important;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.ia-phantom-touch-shield {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 48px;
+  z-index: 25;
+  background: transparent;
+  pointer-events: none !important;
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Squared video player frame & letterboxing container */
+iframe, video {
+  background-color: #000000 !important;
+  color-scheme: dark;
+  border: none !important;
+  border-width: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100% !important;
+}
+
+iframe {
+  /* Slightly expand to eliminate any 1px subpixel gaps on sub-renderers / webview */
+  transform: scale(1.005);
+  transform-origin: center center;
+}
+
+
