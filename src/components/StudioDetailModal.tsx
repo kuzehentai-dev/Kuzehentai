@@ -17,7 +17,7 @@ import {
   ArrowUpDown 
 } from 'lucide-react';
 import { getAnimeRatingStats } from '../utils/ratingManager';
-import { getFallbackSvg } from '../utils/imageFallback';
+import { getFallbackSvg, preloadAllAnimes } from '../utils/imageFallback';
 import GalleryCard from './GalleryCard';
 
 interface StudioDetailModalProps {
@@ -76,6 +76,13 @@ export default function StudioDetailModal({
       return sIds.includes(studio.id) || a.studioId === studio.id;
     });
   }, [studio, animes]);
+
+  // Eagerly preload all animes of this studio immediately on entry
+  useEffect(() => {
+    if (studioAnimes.length > 0) {
+      preloadAllAnimes(studioAnimes, studios);
+    }
+  }, [studioAnimes, studios]);
 
   // Total votes across all animes of this studio
   const totalVotes = useMemo(() => {
@@ -155,7 +162,11 @@ export default function StudioDetailModal({
     if (newPage < 1 || newPage > totalPages || newPage === page) return;
     setPageDirection(newPage > page ? 1 : -1);
     setPage(newPage);
-    catalogTopRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (containerRef.current) {
+      containerRef.current.scrollTop = 0;
+    } else {
+      catalogTopRef.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior });
+    }
   };
 
   // Gesto de deslizamiento (swipe) para cambiar de página o salir del apartado de estudio
@@ -192,32 +203,21 @@ export default function StudioDetailModal({
       const duration = Date.now() - startTime;
       startTime = 0;
 
-      // Deslizamiento horizontal predominante y rápido (< 750ms)
-      if (Math.abs(deltaX) > 45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25 && duration < 750) {
-        // Deslizar hacia la izquierda (swipe left) -> Siguiente página en el catálogo
-        if (deltaX < -45) {
-          if (page < totalPages) {
-            try {
-              if (navigator.vibrate) navigator.vibrate(20);
-            } catch {}
-            handlePageChange(page + 1);
-          }
-        }
-        // Deslizar hacia la derecha (swipe right)
-        else if (deltaX > 45) {
-          // Si el deslizamiento inicia cerca del borde izquierdo (< 45px) o ya está en la primera página -> Salir
-          if (startX < 45 || page <= 1 || totalPages <= 1) {
-            try {
-              if (navigator.vibrate) navigator.vibrate(20);
-            } catch {}
-            onClose();
-          } else {
-            // Página anterior
-            try {
-              if (navigator.vibrate) navigator.vibrate(20);
-            } catch {}
-            handlePageChange(page - 1);
-          }
+      // Deslizamiento horizontal (Swipe como en galería de fotos):
+      // Deslizar de IZQUIERDA a DERECHA (Swipe Right) sale directamente al catálogo principal con 1 solo gesto
+      if (deltaX > 45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.15 && duration < 800) {
+        try {
+          if (navigator.vibrate) navigator.vibrate(20);
+        } catch {}
+        onClose();
+      }
+      // Deslizar de DERECHA a IZQUIERDA (Swipe Left) avanza a la siguiente página del estudio si existe
+      else if (deltaX < -45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.15 && duration < 800) {
+        if (page < totalPages) {
+          try {
+            if (navigator.vibrate) navigator.vibrate(20);
+          } catch {}
+          handlePageChange(page + 1);
         }
       }
     };
@@ -276,7 +276,7 @@ export default function StudioDetailModal({
   };
 
   return (
-    <div ref={containerRef} className="fixed inset-0 z-[1000] bg-[#0c0517] overflow-y-auto flex flex-col text-white animate-fade-in">
+    <div ref={containerRef} className="w-full min-h-screen bg-[#0c0517] overflow-y-auto flex flex-col text-white">
       {/* Botón flotante para volver (idéntico al de entrar a un anime, sin líneas divisorias, sin nombre ni X) */}
       <div className="p-4 sm:p-6 pb-2 max-w-5xl mx-auto w-full flex items-center">
         <button
@@ -401,17 +401,18 @@ export default function StudioDetailModal({
                     custom={pageDirection}
                     initial={(dir: number) => ({
                       opacity: 0,
-                      x: dir >= 0 ? 60 : -60,
+                      x: dir >= 0 ? '100%' : '-100%'
                     })}
                     animate={{
                       opacity: 1,
-                      x: 0,
+                      x: 0
                     }}
                     exit={(dir: number) => ({
                       opacity: 0,
-                      x: dir >= 0 ? -60 : 60,
+                      x: dir >= 0 ? '-100%' : '100%'
                     })}
-                    transition={{ duration: 0.32, ease: [0.25, 1, 0.5, 1] }}
+                    transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                    style={{ willChange: 'transform, opacity' }}
                     className="grid grid-cols-3 gap-1.5 sm:gap-2.5 md:gap-3"
                   >
                     {currentStudioAnimes.map((item, index) => (

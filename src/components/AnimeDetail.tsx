@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Anime, Studio, Genre, normalizeAnimeYear } from '../types';
 import { ArrowLeft, Download, Plus, Check, Play, Pause, Volume2, VolumeX, X, Film, ExternalLink, Tv, Video, Maximize2, Minimize2, RotateCcw, RotateCw, FastForward, Maximize, Loader2, Sparkles, Eye, EyeOff, Star } from 'lucide-react';
-import { getFallbackSvg, processImageSrc, globalImageCache, SmartAnimeCover } from '../utils/imageFallback';
+import { getFallbackSvg, processImageSrc, globalImageCache, SmartAnimeCover, preloadAnimeCover } from '../utils/imageFallback';
 import GlobalComments from './GlobalComments';
 import AnimeRatingModal from './AnimeRatingModal';
 import { getAnimeRatingStats, submitAnimeVote, RatingStats } from '../utils/ratingManager';
@@ -172,6 +172,33 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
     // Tomar 3 animes distintos
     return shuffled.slice(0, 3);
   }, [anime.id, availableAnimes, visitSeed]);
+
+  // Eagerly download and warm all content immediately on mounting (so user doesn't have to scroll down to load)
+  useEffect(() => {
+    // 1. Preload anime poster & backdrop
+    preloadAnimeCover(anime, studio?.name);
+
+    // 2. Preload recommended animes
+    if (recommendedAnimes.length > 0) {
+      recommendedAnimes.forEach(rec => {
+        const sIds = (rec.studioIds && rec.studioIds.length > 0) ? rec.studioIds : (rec.studioId ? [rec.studioId] : []);
+        const recStudio = studios.find(s => sIds.includes(s.id))?.name || 'Estudio';
+        preloadAnimeCover(rec, recStudio);
+      });
+    }
+
+    // 3. Preload all episode thumbnails
+    if (anime.episodes && anime.episodes.length > 0) {
+      anime.episodes.forEach(ep => {
+        const epCover = ep.thumbnail || ep.coverImage;
+        if (epCover && !epCover.startsWith('data:')) {
+          const img = new Image();
+          img.decoding = 'async';
+          img.src = epCover;
+        }
+      });
+    }
+  }, [anime.id, anime.episodes, studio?.name, recommendedAnimes, studios]);
 
   // Video Player Modal State
   const [activeEpisodeNum, setActiveEpisodeNum] = useState<number | null>(initialEpisodeNum || null);
@@ -566,24 +593,8 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
         </div>
       )}
 
-      {/* Gallery Photo Slide Transition: Smooth horizontal sliding like passing photos in a gallery */}
-      <motion.div
-        custom={navDirection}
-        initial={(dir: number = 1) => ({
-          opacity: 0,
-          x: dir >= 0 ? 80 : -80,
-        })}
-        animate={{
-          opacity: 1,
-          x: 0,
-        }}
-        exit={(dir: number = -1) => ({
-          opacity: 0,
-          x: dir >= 0 ? -80 : 80,
-        })}
-        transition={{ duration: 0.32, ease: [0.25, 1, 0.5, 1] }}
-        className="relative max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[1600px] mx-auto z-10"
-      >
+      {/* Content Container */}
+      <div className="relative max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[1600px] mx-auto z-10">
         {/* Back Button - Slightly larger for improved ergonomics */}
         <button
           type="button"
@@ -853,17 +864,15 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                                 onDownload(anime.id);
                               }
                             }}
-                            className={`group relative aspect-video w-full rounded-2xl overflow-hidden cursor-pointer transition-all duration-300 shadow-xl select-none active:scale-[0.98] ${
-                              isActive
-                                ? 'ring-2 ring-white/70 shadow-[0_0_20px_rgba(255,255,255,0.2)]'
-                                : 'hover:opacity-95'
-                            }`}
+                            className="group relative aspect-video w-full rounded-2xl overflow-hidden cursor-pointer transition-all duration-300 shadow-xl select-none active:scale-[0.98] hover:opacity-95 border-0 outline-none"
                           >
                             {/* Episode Thumbnail */}
                             {epCover ? (
                               <img
                                 src={epCover}
                                 alt={`Episodio ${ep.number}`}
+                                loading="eager"
+                                decoding="async"
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                                 onError={(e) => {
                                   e.currentTarget.src = getFallbackSvg(anime.name);
@@ -928,6 +937,8 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                                 anime={rec}
                                 studioName={recStudio}
                                 alt={rec.name}
+                                loading="eager"
+                                priority={true}
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                               />
                               {/* Subtle title overlay at bottom */}
@@ -967,11 +978,11 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                             animate={{ scale: 1, opacity: 1, y: 0 }}
                             exit={{ scale: 0.94, opacity: 0, y: 14 }}
                             transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
-                            className={`relative z-10 w-full ${isPlayerExpanded ? 'max-w-[96vw]' : 'max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[1500px]'} bg-neutral-950 border border-neutral-800 rounded-2xl p-2.5 sm:p-4 shadow-2xl flex flex-col gap-2.5 max-h-[95vh] overflow-y-auto my-auto transition-all duration-300 touch-pan-y`}
+                            className={`relative z-10 w-full ${isPlayerExpanded ? 'max-w-[96vw]' : 'max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[1500px]'} bg-neutral-950 border-0 rounded-2xl p-2.5 sm:p-4 shadow-2xl flex flex-col gap-2.5 max-h-[95vh] overflow-y-auto my-auto transition-all duration-300 touch-pan-y outline-none`}
                           >
                         
                         {/* Encabezado Limpio del Reproductor: Título y Controles del Pantalla Completa */}
-                        <div className="flex items-center justify-between pb-2 border-b border-neutral-800 px-1">
+                        <div className="flex items-center justify-between pb-2 border-b border-white/10 px-1">
                           <div className="min-w-0 flex items-center gap-2">
                             <h2 className="font-display text-sm sm:text-base font-semibold text-white truncate leading-tight">
                               {anime.name}
@@ -1079,11 +1090,7 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                                 <div
                                   key={ep.number}
                                   onClick={() => setActiveEpisodeNum(ep.number)}
-                                  className={`group relative aspect-video w-full rounded-xl overflow-hidden cursor-pointer transition-all duration-200 shadow-md select-none active:scale-[0.98] ${
-                                    isActive
-                                      ? 'ring-2 ring-white/70 shadow-[0_0_15px_rgba(255,255,255,0.25)]'
-                                      : 'hover:opacity-95'
-                                  }`}
+                                  className="group relative aspect-video w-full rounded-xl overflow-hidden cursor-pointer transition-all duration-200 shadow-md select-none active:scale-[0.98] hover:opacity-95 border-0 outline-none"
                                 >
                                   {epCover ? (
                                     <img
@@ -1133,7 +1140,7 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
             />
           </div>
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }

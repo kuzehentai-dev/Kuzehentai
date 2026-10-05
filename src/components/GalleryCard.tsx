@@ -34,23 +34,18 @@ function GalleryCard({ anime, studios, onClick, index, isNewEpisodesMode, episod
 
   return (
     <div className="h-full w-full">
-      <motion.div
+      <div
         id={`anime-card-${anime.id}`}
         onClick={onClick}
-        initial={{ scale: 0.88, opacity: 0.8 }}
-        whileInView={{ scale: 1, opacity: 1 }}
-        viewport={{ once: false, amount: 0.12 }}
-        whileTap={{ scale: 0.96 }}
-        whileHover={{ y: -4, scale: 1.03 }}
-        transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-        style={{ willChange: "transform, opacity" }}
-        className="group relative cursor-pointer aspect-[2/3] w-full bg-[#0d0818] rounded-2xl overflow-hidden border border-[#23153c] hover:border-purple-500/70 hover:shadow-lg hover:shadow-purple-950/40 shadow-md touch-manipulation select-none transition-all duration-300 block"
+        title={anime.name}
+        className="group relative cursor-pointer aspect-[2/3] w-full bg-[#0d0818] rounded-2xl overflow-hidden border border-[#23153c] hover:border-purple-500/70 hover:shadow-lg hover:shadow-purple-950/40 shadow-md touch-manipulation select-none active:scale-[0.96] hover:-translate-y-0.5 transition-all duration-200 block"
       >
         {episodeCoverImage && !epCoverError ? (
           <img
             src={episodeCoverImage}
             alt={`${anime.name} - Ep ${lastEpisodeNumber}`}
-            loading={index !== undefined && index < 12 ? 'eager' : 'lazy'}
+            loading="eager"
+            decoding="async"
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
             referrerPolicy="no-referrer"
             onError={() => setEpCoverError(true)}
@@ -60,8 +55,8 @@ function GalleryCard({ anime, studios, onClick, index, isNewEpisodesMode, episod
             anime={anime}
             studioName={studioName}
             alt={anime.name}
-            loading={index !== undefined && index < 12 ? 'eager' : 'lazy'}
-            priority={index !== undefined && index < 6}
+            loading="eager"
+            priority={true}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           />
         )}
@@ -88,7 +83,7 @@ function GalleryCard({ anime, studios, onClick, index, isNewEpisodesMode, episod
             {anime.name}
           </p>
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }

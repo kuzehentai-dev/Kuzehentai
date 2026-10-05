@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Bookmark, LogOut, Check, User as UserIcon, Edit3, AlertCircle, Palette, Moon, Sparkles } from 'lucide-react';
+import { X, Bookmark, LogOut, Check, User as UserIcon, Edit3, AlertCircle, Palette, Moon, Sparkles, Eye } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { auth, updateProfile, db, doc, setDoc, serverTimestamp } from '../lib/firebase';
 import { isUsernameTaken, reserveUsername } from '../lib/usernameService';
@@ -12,7 +12,9 @@ interface UserProfileModalProps {
   onClose: () => void;
   currentUser: User | null;
   myListCount: number;
+  watchedCount?: number;
   onOpenMyList: () => void;
+  onOpenWatched?: () => void;
   onLogout: () => Promise<void>;
   onUserUpdated?: () => void;
 }
@@ -22,7 +24,9 @@ export default function UserProfileModal({
   onClose,
   currentUser,
   myListCount,
+  watchedCount = 0,
   onOpenMyList,
+  onOpenWatched,
   onLogout,
   onUserUpdated
 }: UserProfileModalProps) {
@@ -131,15 +135,18 @@ export default function UserProfileModal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
+          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
           onClick={onClose}
           className="fixed inset-0 bg-black/80 backdrop-blur-md z-0"
         />
 
-        {/* Modal Content */}
+        {/* Modal Content with spring physics and hardware acceleration for maximum fluidity */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+          initial={{ opacity: 0, scale: 0.94, y: 14 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+          exit={{ opacity: 0, scale: 0.94, y: 14 }}
+          transition={{ type: 'spring', damping: 26, stiffness: 350, mass: 0.8 }}
+          style={{ willChange: 'transform, opacity' }}
           className="relative z-10 w-full max-w-sm bg-[#120b1c] border border-purple-900/50 rounded-2xl p-5 shadow-2xl overflow-y-auto max-h-[90vh] max-h-[90dvh] scrollbar-thin scrollbar-thumb-purple-900/50"
         >
           {/* Header */}
@@ -330,8 +337,8 @@ export default function UserProfileModal({
             )}
           </form>
 
-          {/* Section: Mi Lista */}
-          <div className="mt-4 pt-3 border-t border-purple-900/30">
+          {/* Section: Mi Lista y Animes Vistos */}
+          <div className="mt-4 pt-3 border-t border-purple-900/30 space-y-2">
             <button
               type="button"
               onClick={() => {
@@ -355,6 +362,35 @@ export default function UserProfileModal({
               </div>
               <span className="px-2 py-0.5 bg-[#ff5588]/20 border border-[#ff5588]/40 text-[#ff5588] rounded-full text-[10px] font-mono font-bold">
                 {myListCount}
+              </span>
+            </button>
+
+            {/* Section: Animes Vistos debajo de Mi Lista */}
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                if (onOpenWatched) {
+                  onOpenWatched();
+                }
+              }}
+              className="w-full p-2.5 bg-[#180e26] hover:bg-[#221337] border border-purple-900/50 hover:border-emerald-600/60 rounded-xl transition-all duration-200 flex items-center justify-between cursor-pointer group"
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 rounded-lg bg-emerald-950/60 text-emerald-400 group-hover:bg-emerald-500 group-hover:text-black transition-colors">
+                  <Eye className="h-4 w-4" />
+                </div>
+                <div className="text-left">
+                  <p className="text-xs font-semibold text-white group-hover:text-emerald-300 transition-colors">
+                    Animes Vistos
+                  </p>
+                  <p className="text-[10px] text-neutral-400 font-mono">
+                    Historial de animes marcados como vistos
+                  </p>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 rounded-full text-[10px] font-mono font-bold">
+                {watchedCount}
               </span>
             </button>
           </div>

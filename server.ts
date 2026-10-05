@@ -2679,23 +2679,6 @@ class DBService {
         totalCoversDiskMB: +(totalCoversDiskBytes / (1024 * 1024)).toFixed(2),
         totalCoversCount
       },
-      quotas: {
-        dailyReads: {
-          limit: SPARK_DAILY_READS_LIMIT,
-          limitFormatted: '50,000 lecturas / día',
-          description: '50,000 documentos leídos cada 24 horas (se reinicia automáticamente a medianoche UTC).'
-        },
-        dailyWrites: {
-          limit: SPARK_DAILY_WRITES_LIMIT,
-          limitFormatted: '20,000 escrituras / día',
-          description: '20,000 altas o modificaciones de documentos por día.'
-        },
-        dailyDeletes: {
-          limit: SPARK_DAILY_DELETES_LIMIT,
-          limitFormatted: '20,000 eliminaciones / día',
-          description: '20,000 documentos eliminados por día.'
-        }
-      },
       counts: {
         totalDocuments,
         animes: animes.length,
@@ -2703,12 +2686,7 @@ class DBService {
         studios: studios.length,
         genres: genres.length,
         userLists: userListsCount
-      },
-      optimizationTips: [
-        'Las portadas de animes están optimizadas en formato WebP en el servidor para no saturar los 1 GB de Firestore.',
-        'El servidor cuenta con caché en memoria, lo que reduce las lecturas diarias a Firestore prácticamente a cero en visitas repetidas.',
-        'Con tu contenido actual, estás usando menos del 1% del límite de 1 GB gratuito.'
-      ]
+      }
     };
   }
 }
@@ -3809,7 +3787,12 @@ async function start() {
       if (fs.existsSync(indexHtmlPath)) {
         await handleHtmlRequest(req, res, indexHtmlPath);
       } else {
-        res.status(404).send('Not Found');
+        const rootIndexHtml = path.join(process.cwd(), 'index.html');
+        if (fs.existsSync(rootIndexHtml)) {
+          await handleHtmlRequest(req, res, rootIndexHtml);
+        } else {
+          res.status(200).send('OK');
+        }
       }
     });
   }

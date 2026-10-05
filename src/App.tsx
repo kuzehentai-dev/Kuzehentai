@@ -7,7 +7,7 @@ import React, { useState, useEffect, useRef, useMemo, useDeferredValue, useCallb
 import { Studio, Genre, Anime, normalizeAnimeYear } from './types';
 import { requestPersistentStorage, saveMyListToIDB, getMyListFromIDB, saveMyListAnimesToIDB } from './lib/idbStorage';
 import { getStableDeviceId } from './lib/deviceFingerprint';
-import { auth, onAuthStateChanged, configureAuthPersistence, db, doc, getDoc } from './lib/firebase';
+import { auth, onAuthStateChanged, configureAuthPersistence, db, doc, getDoc, collection, getDocs } from './lib/firebase';
 import { User } from 'firebase/auth';
 import { 
   addAnimeToUserList, 
@@ -33,12 +33,12 @@ import AuthModal from './components/AuthModal';
 import UserProfileModal from './components/UserProfileModal';
 
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
-import { SmartAnimeCover, processImageSrc, globalImageCache } from './utils/imageFallback';
+import { SmartAnimeCover, processImageSrc, globalImageCache, preloadAllAnimes, preloadAnimeCover } from './utils/imageFallback';
 import { getAnimeRatingStats } from './utils/ratingManager';
 import { 
   Search, Film, Info, Plus, ChevronDown, Check, Send, AlertCircle, 
   MapPin, Heart, ExternalLink, ShieldCheck, Shield, Zap, Lock, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  SlidersHorizontal, X, RotateCcw, Flame, Menu, UserCheck, LogIn, Palette, Moon, Sparkles
+  SlidersHorizontal, X, RotateCcw, Flame, Menu, UserCheck, LogIn, Palette, Moon, Sparkles, Eye
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppTheme } from './lib/theme';
@@ -74,9 +74,13 @@ import {
   buildNormalizedAnimeData 
 } from './utils/searchUtils';
 
+export type PageType = 'home' | 'detail' | 'admin' | 'my-list' | 'watched' | 'studio';
+
 export default function App() {
   // Page routing state
-  const [currentPage, setCurrentPage] = useState<'home' | 'detail' | 'admin' | 'my-list'>('home');
+  const [currentPage, setCurrentPage] = useState<PageType>('home');
+  const [previousPage, setPreviousPage] = useState<PageType>('home');
+  const [selectedStudio, setSelectedStudio] = useState<Studio | null>(null);
   const [selectedAnimeId, setSelectedAnimeId] = useState<string>('');
   const [selectedEpisodeNum, setSelectedEpisodeNum] = useState<number | undefined>(undefined);
   const [navDirection, setNavDirection] = useState<number>(1);
@@ -336,27 +340,35 @@ export default function App() {
     });
   };
 
-  // Database lists state with instant cache revalidation
+  // Database lists state with persistent session & local cache for zero-latency instant rendering
   const [studios, setStudios] = useState<Studio[]>(() => {
     try {
+      const sess = sessionStorage.getItem('hk_cached_studios');
+      if (sess) return JSON.parse(sess);
       const saved = localStorage.getItem('hk_cached_studios');
       return saved ? JSON.parse(saved) : [];
     } catch (e) { return []; }
   });
   const [genres, setGenres] = useState<Genre[]>(() => {
     try {
+      const sess = sessionStorage.getItem('hk_cached_genres');
+      if (sess) return JSON.parse(sess);
       const saved = localStorage.getItem('hk_cached_genres');
       return saved ? JSON.parse(saved) : [];
     } catch (e) { return []; }
   });
   const [animes, setAnimes] = useState<Anime[]>(() => {
     try {
+      const sess = sessionStorage.getItem('hk_cached_animes');
+      if (sess) return JSON.parse(sess);
       const saved = localStorage.getItem('hk_cached_animes');
       return saved ? JSON.parse(saved) : [];
     } catch (e) { return []; }
   });
   const [loading, setLoading] = useState<boolean>(() => {
     try {
+      const sess = sessionStorage.getItem('hk_cached_animes');
+      if (sess && JSON.parse(sess).length > 0) return false;
       const saved = localStorage.getItem('hk_cached_animes');
       return saved ? JSON.parse(saved).length === 0 : true;
     } catch (e) { return true; }
@@ -366,9 +378,6 @@ export default function App() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStudioId, setSelectedStudioId] = useState('');
-  const [selectedStudioForDetail, setSelectedStudioForDetail] = useState<Studio | null>(null);
-  const [studioDetailState, setStudioDetailState] = useState<{ studio: Studio; page: number; scrollY: number } | null>(null);
-  const studioDetailStateRef = useRef<{ studio: Studio; page: number; scrollY: number } | null>(null);
   const [selectedGenreIds, setSelectedGenreIds] = useState<string[]>([]);
   const [selectedYear, setSelectedYear] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
@@ -505,10 +514,15 @@ export default function App() {
             setGenres(data.genres);
             setAnimes(data.animes);
             try {
+              sessionStorage.setItem('hk_cached_studios', JSON.stringify(data.studios));
+              sessionStorage.setItem('hk_cached_genres', JSON.stringify(data.genres));
+              sessionStorage.setItem('hk_cached_animes', JSON.stringify(data.animes));
               localStorage.setItem('hk_cached_studios', JSON.stringify(data.studios));
               localStorage.setItem('hk_cached_genres', JSON.stringify(data.genres));
               localStorage.setItem('hk_cached_animes', JSON.stringify(data.animes));
             } catch (e) {}
+            // Eagerly prime all anime covers into memory cache
+            preloadAllAnimes(data.animes, data.studios);
             return;
           }
         }
@@ -521,15 +535,16 @@ export default function App() {
         fetch('/api/animes', { headers }).catch(() => null)
       ]);
 
+      let loadedStudios: Studio[] | null = null;
+      let loadedGenres: Genre[] | null = null;
+      let loadedAnimes: Anime[] | null = null;
+
       if (resStudios && resStudios.ok) {
         const contentType = resStudios.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           try {
             const dataStudios = await resStudios.json();
-            if (Array.isArray(dataStudios)) {
-              setStudios(dataStudios);
-              try { localStorage.setItem('hk_cached_studios', JSON.stringify(dataStudios)); } catch (e) {}
-            }
+            if (Array.isArray(dataStudios)) loadedStudios = dataStudios;
           } catch (e) {}
         }
       }
@@ -539,10 +554,7 @@ export default function App() {
         if (contentType.includes('application/json')) {
           try {
             const dataGenres = await resGenres.json();
-            if (Array.isArray(dataGenres)) {
-              setGenres(dataGenres);
-              try { localStorage.setItem('hk_cached_genres', JSON.stringify(dataGenres)); } catch (e) {}
-            }
+            if (Array.isArray(dataGenres)) loadedGenres = dataGenres;
           } catch (e) {}
         }
       }
@@ -552,12 +564,99 @@ export default function App() {
         if (contentType.includes('application/json')) {
           try {
             const dataAnimes = await resAnimes.json();
-            if (Array.isArray(dataAnimes)) {
-              setAnimes(dataAnimes);
-              try { localStorage.setItem('hk_cached_animes', JSON.stringify(dataAnimes)); } catch (e) {}
-            }
+            if (Array.isArray(dataAnimes)) loadedAnimes = dataAnimes;
           } catch (e) {}
         }
+      }
+
+      // CRITICAL FALLBACK FOR VERCEL / NETLIFY / GITHUB PAGES / STATIC HOSTING:
+      // If the Node/Express backend is not running or returned 404 (common in static deployments),
+      // connect and query directly from Firebase Firestore in the client browser!
+      if (!loadedAnimes || loadedAnimes.length === 0) {
+        console.info('⚡ [Modo Hosting Estático / Vercel] Backend Express en /api/ no detectado. Conectando directamente a Firebase Firestore...');
+        try {
+          const [animesSnap, studiosSnap, genresSnap] = await Promise.all([
+            getDocs(collection(db, 'animes')).catch(() => null),
+            getDocs(collection(db, 'studios')).catch(() => null),
+            getDocs(collection(db, 'genres')).catch(() => null)
+          ]);
+
+          if (animesSnap && !animesSnap.empty) {
+            loadedAnimes = animesSnap.docs.map(docSnap => {
+              const d = docSnap.data();
+              return {
+                id: docSnap.id,
+                name: d.name || '',
+                image: d.image || '',
+                coverData: d.coverData || undefined,
+                year: d.year || '',
+                telegramUrl: d.telegramUrl || '',
+                episodes: d.episodes || [],
+                studioId: d.studioId || '',
+                studioIds: d.studioIds || (d.studioId ? [d.studioId] : []),
+                genreIds: d.genreIds || [],
+                status: d.status || 'Finalizado',
+                description: d.description || '',
+                hidden: Boolean(d.hidden),
+                downloads: Number(d.downloads) || 0,
+                createdAt: d.createdAt || '',
+                updatedAt: d.updatedAt || '',
+                storageLocation: 'Firebase Firestore (khentai)',
+                savedInFirestore: true
+              } as Anime;
+            });
+          }
+
+          if (studiosSnap && !studiosSnap.empty) {
+            loadedStudios = studiosSnap.docs.map(docSnap => {
+              const d = docSnap.data();
+              return {
+                id: docSnap.id,
+                name: d.name || '',
+                image: d.image || '',
+                storageLocation: 'Firebase Firestore (khentai)'
+              } as Studio;
+            });
+          }
+
+          if (genresSnap && !genresSnap.empty) {
+            loadedGenres = genresSnap.docs.map(docSnap => {
+              const d = docSnap.data();
+              return {
+                id: docSnap.id,
+                name: d.name || '',
+                storageLocation: 'Firebase Firestore (khentai)'
+              } as Genre;
+            });
+          }
+        } catch (fsErr) {
+          console.warn('⚠️ [Firebase Direct Fallback Warning]:', fsErr);
+        }
+      }
+
+      if (loadedStudios && loadedStudios.length > 0) {
+        setStudios(loadedStudios);
+        try {
+          sessionStorage.setItem('hk_cached_studios', JSON.stringify(loadedStudios));
+          localStorage.setItem('hk_cached_studios', JSON.stringify(loadedStudios));
+        } catch (e) {}
+      }
+
+      if (loadedGenres && loadedGenres.length > 0) {
+        setGenres(loadedGenres);
+        try {
+          sessionStorage.setItem('hk_cached_genres', JSON.stringify(loadedGenres));
+          localStorage.setItem('hk_cached_genres', JSON.stringify(loadedGenres));
+        } catch (e) {}
+      }
+
+      if (loadedAnimes && loadedAnimes.length > 0) {
+        setAnimes(loadedAnimes);
+        try {
+          sessionStorage.setItem('hk_cached_animes', JSON.stringify(loadedAnimes));
+          localStorage.setItem('hk_cached_animes', JSON.stringify(loadedAnimes));
+        } catch (e) {}
+        preloadAllAnimes(loadedAnimes, loadedStudios || studios);
       }
     } catch (err) {
       console.warn('Sync status:', err);
@@ -566,24 +665,22 @@ export default function App() {
     }
   };
 
-  // Sync state on load & handle browser back/forward buttons + live 2-way auto-sync
+  // Sync state once on startup & persist without periodic polling (content stays until page reload)
   useEffect(() => {
-    fetchData(animes.length > 0);
+    // Only fetch if we don't already have animes loaded in state
+    if (animes.length === 0) {
+      fetchData(false);
+    } else {
+      setLoading(false);
+      // Prime memory cache with already loaded animes
+      preloadAllAnimes(animes, studios);
+    }
 
-    // Live auto-sync interval (every 10 seconds)
-    const interval = setInterval(() => {
+    // Refresh only when explicit mutations occur (like admin edits or manual trigger)
+    const handleManualRefresh = () => {
       fetchData(true);
-    }, 10000);
-
-    // Immediate sync when returning to tab/window
-    const handleSyncOnFocus = () => {
-      if (document.visibilityState === 'visible') {
-        fetchData(true);
-      }
     };
-
-    window.addEventListener('focus', handleSyncOnFocus);
-    document.addEventListener('visibilitychange', handleSyncOnFocus);
+    window.addEventListener('kh_refresh_catalog', handleManualRefresh);
 
     const handleInitialPath = () => {
       const path = window.location.pathname;
@@ -597,12 +694,19 @@ export default function App() {
         setCurrentPage('admin');
       } else if (path === '/mi-lista') {
         setCurrentPage('my-list');
+      } else if (path === '/vistos') {
+        setCurrentPage('watched');
+      } else if (path.startsWith('/estudio/')) {
+        const id = path.split('/')[2];
+        const st = studios.find(s => s.id === id || s.name === decodeURIComponent(id));
+        if (st) {
+          setSelectedStudio(st);
+          setCurrentPage('studio');
+        } else {
+          setCurrentPage('home');
+        }
       } else {
         setCurrentPage('home');
-        // Si el usuario navegó hacia atrás desde un anime y provenía de un estudio, restaurar el estudio
-        if (studioDetailStateRef.current?.studio) {
-          setSelectedStudioForDetail(studioDetailStateRef.current.studio);
-        }
       }
     };
 
@@ -614,9 +718,7 @@ export default function App() {
 
     window.addEventListener('popstate', handlePopState);
     return () => {
-      clearInterval(interval);
-      window.removeEventListener('focus', handleSyncOnFocus);
-      document.removeEventListener('visibilitychange', handleSyncOnFocus);
+      window.removeEventListener('kh_refresh_catalog', handleManualRefresh);
       window.removeEventListener('popstate', handlePopState);
     };
   }, []);
@@ -647,10 +749,14 @@ export default function App() {
       document.title = `Panel Administrador - KuzeHentai`;
     } else if (currentPage === 'my-list') {
       document.title = `Mi Lista - KuzeHentai`;
+    } else if (currentPage === 'watched') {
+      document.title = `Animes Vistos - KuzeHentai`;
+    } else if (currentPage === 'studio' && selectedStudio) {
+      document.title = `${selectedStudio.name} - KuzeHentai | Catálogo del Estudio`;
     } else {
       document.title = `KuzeHentai - Catálogo Hentai Subtitulado en Español | Anime Hentai`;
     }
-  }, [currentPage, selectedAnimeId, animes]);
+  }, [currentPage, selectedAnimeId, selectedStudio, animes]);
 
   // Scroll position & cover reference tracking for fluid gallery restoration
   const savedScrollPos = useRef<number>(0);
@@ -687,8 +793,14 @@ export default function App() {
   };
 
   // Custom router navigation function with smooth position restoration
-  const navigateTo = (nextPage: 'home' | 'detail' | 'admin' | 'my-list', animeId = '', episodeNum?: number) => {
-    const previousPage = currentPage;
+  const navigateTo = (
+    nextPage: PageType,
+    animeId = '',
+    episodeNum?: number,
+    studio?: Studio | null
+  ) => {
+    const prev = currentPage;
+    setPreviousPage(prev);
 
     if (nextPage === 'admin') {
       const isAuthorizedAdmin = currentUser && currentUser.email?.toLowerCase().trim() === 'kuzeofc@gmail.com';
@@ -699,22 +811,38 @@ export default function App() {
       }
     }
 
-    if (nextPage === 'detail' || nextPage === 'my-list' || nextPage === 'admin') {
+    if (nextPage === 'detail' || nextPage === 'my-list' || nextPage === 'watched' || nextPage === 'admin' || nextPage === 'studio') {
       setNavDirection(1);
     } else if (nextPage === 'home') {
       setNavDirection(-1);
     }
 
+    if (studio) {
+      setSelectedStudio(studio);
+    }
+
     // Save current scroll Y and anime ID when entering detail view
     if (nextPage === 'detail') {
       setIsDetailAnimating(true);
-      if (previousPage !== 'detail') {
+      if (prev !== 'detail') {
         savedScrollPos.current = window.scrollY || document.documentElement.scrollTop;
       }
       if (animeId) {
         lastViewedAnimeId.current = animeId;
+        const target = animes.find(a => a.id === animeId);
+        if (target) {
+          const sIds = (target.studioIds && target.studioIds.length > 0) ? target.studioIds : (target.studioId ? [target.studioId] : []);
+          const sName = studios.find(s => sIds.includes(s.id))?.name || 'Estudio';
+          preloadAnimeCover(target, sName);
+        }
       }
-    } else if (previousPage === 'detail') {
+    } else if (nextPage === 'my-list') {
+      const savedAnimes = animes.filter(a => myListIds.includes(a.id));
+      preloadAllAnimes(savedAnimes, studios);
+    } else if (nextPage === 'watched') {
+      const watchedAnimes = animes.filter(a => watchedIds.includes(a.id));
+      preloadAllAnimes(watchedAnimes, studios);
+    } else if (prev === 'detail') {
       setIsDetailAnimating(true);
     }
 
@@ -722,21 +850,20 @@ export default function App() {
     setSelectedAnimeId(animeId);
     setSelectedEpisodeNum(episodeNum);
     
-    const path = nextPage === 'detail' ? `/anime/${animeId}` : nextPage === 'admin' ? '/admin' : nextPage === 'my-list' ? '/mi-lista' : '/';
+    let path = '/';
+    if (nextPage === 'detail') path = `/anime/${animeId}`;
+    else if (nextPage === 'admin') path = '/admin';
+    else if (nextPage === 'my-list') path = '/mi-lista';
+    else if (nextPage === 'watched') path = '/vistos';
+    else if (nextPage === 'studio') path = `/estudio/${studio?.id || selectedStudio?.id || ''}`;
+    
     window.history.pushState(null, '', path);
     
-    if (nextPage === 'admin') {
-      // Always reset scroll position immediately to the top when opening admin menu
-      window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
-      document.documentElement.scrollTop = 0;
-      document.body.scrollTop = 0;
-    } else if (nextPage === 'detail') {
-      // Direct instant placement at top cover without automatic scroll animation
+    if (nextPage === 'admin' || nextPage === 'detail' || nextPage === 'studio' || nextPage === 'watched') {
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
       document.documentElement.scrollTop = 0;
       document.body.scrollTop = 0;
     } else if (nextPage === 'home') {
-      // Returning to home gallery: ensure displayMode and page are consistently restored from persistence
       try {
         const savedMode = localStorage.getItem('kh_display_mode');
         if (savedMode === 'episodes' || savedMode === 'catalog') {
@@ -751,7 +878,7 @@ export default function App() {
         }
       } catch {}
 
-      if (previousPage !== 'detail') {
+      if (prev !== 'detail') {
         window.scrollTo(0, 0);
       }
     } else {
@@ -1047,9 +1174,9 @@ export default function App() {
       const rect = gridElem.getBoundingClientRect();
       const currentY = window.scrollY || document.documentElement.scrollTop;
       const targetY = Math.max(0, currentY + rect.top - 80);
-      smoothScrollTo(targetY, 280);
+      window.scrollTo({ top: targetY, left: 0, behavior: 'instant' as ScrollBehavior });
     } else {
-      smoothScrollTo(0, 280);
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
     }
   }, [page, totalCatalogPages]);
 
@@ -1061,7 +1188,7 @@ export default function App() {
   //      * Si página > 1: retrocede a la página anterior del catálogo.
   //      * Si página === 1: vuelve al apartado de Episodios.
   useEffect(() => {
-    if (currentPage !== 'home' || isFilterModalOpen || isAuthModalOpen || isProfileModalOpen || Boolean(selectedStudioForDetail)) {
+    if ((currentPage !== 'home' && currentPage !== 'my-list' && currentPage !== 'watched') || isFilterModalOpen || isAuthModalOpen || isProfileModalOpen) {
       return;
     }
 
@@ -1099,6 +1226,16 @@ export default function App() {
 
       // Movimiento horizontal predominante (evita interferir con scroll vertical)
       if (Math.abs(deltaX) > 45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25 && duration < 750) {
+        if (currentPage === 'my-list' || currentPage === 'watched') {
+          if (deltaX > 45) {
+            try {
+              if (navigator.vibrate) navigator.vibrate(20);
+            } catch {}
+            navigateTo('home');
+          }
+          return;
+        }
+
         if (deltaX < -45) {
           // Deslizamiento de DERECHA a IZQUIERDA (Swipe Left)
           if (displayMode === 'episodes') {
@@ -1148,79 +1285,45 @@ export default function App() {
     isFilterModalOpen,
     isAuthModalOpen,
     isProfileModalOpen,
-    selectedStudioForDetail,
     handlePageChange
   ]);
 
-  // Instant full-catalog preloader (warms browser cache & globalImageCache for zero-latency page switching)
+  // Instant active-page & full-catalog preloader (warms browser memory & globalImageCache for zero-latency page switching)
   useEffect(() => {
     if (animes.length === 0) return;
 
-    const preloadAnimeList = (items: Anime[]) => {
-      items.forEach(anime => {
-        const sIds = (anime.studioIds && anime.studioIds.length > 0)
-          ? anime.studioIds
-          : (anime.studioId ? [anime.studioId] : []);
-        const studioName = studios.find(s => sIds.includes(s.id))?.name || 'Estudio';
-        const src = processImageSrc(anime, studioName);
-        if (!src) return;
+    // 1. Preload the current visible page items immediately with top priority
+    const startIndex = (page - 1) * ITEMS_PER_PAGE;
+    const currentPageItems = sortedAnimes.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+    preloadAllAnimes(currentPageItems, studios);
 
-        if (src.startsWith('data:')) {
-          globalImageCache.add(src);
-          return;
-        }
-
-        if (!globalImageCache.has(src)) {
-          const img = new Image();
-          img.onload = () => {
-            globalImageCache.add(src);
-          };
-          img.onerror = () => {};
-          img.src = src;
-        }
-      });
-    };
-
-    // Preload first page immediately, defer remaining items in background to prevent initial network congestion
-    const firstPage = animes.slice(0, ITEMS_PER_PAGE);
-    preloadAnimeList(firstPage);
-
-    const remaining = animes.slice(ITEMS_PER_PAGE);
-    if (remaining.length > 0) {
-      const timer = setTimeout(() => {
-        preloadAnimeList(remaining);
-      }, 1500);
-      return () => clearTimeout(timer);
+    // 2. Preload adjacent pages (next and previous) so switching pages is instantaneous
+    const nextPageItems = sortedAnimes.slice(startIndex + ITEMS_PER_PAGE, startIndex + (ITEMS_PER_PAGE * 2));
+    if (nextPageItems.length > 0) {
+      preloadAllAnimes(nextPageItems, studios);
     }
-  }, [animes, studios]);
+    if (page > 1) {
+      const prevPageItems = sortedAnimes.slice(Math.max(0, startIndex - ITEMS_PER_PAGE), startIndex);
+      preloadAllAnimes(prevPageItems, studios);
+    }
 
-  // Auto-scroll smooth centering to cover card row when exiting detail view
+    // 3. Preload all remaining items in background into memory store
+    const timer = setTimeout(() => {
+      preloadAllAnimes(animes, studios);
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [page, animes, sortedAnimes, studios]);
+
+  // Instantly restore exact scroll position when returning to catalog view
   useEffect(() => {
-    if ((currentPage === 'home' || currentPage === 'my-list') && lastViewedAnimeId.current) {
-      const targetId = lastViewedAnimeId.current;
-      let cancelled = false;
-      let attempts = 0;
-
-      const attemptScroll = () => {
-        if (cancelled) return;
-        const el = document.getElementById(`anime-card-${targetId}`);
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          lastViewedAnimeId.current = '';
-        } else if (attempts < 20) {
-          attempts++;
-          setTimeout(attemptScroll, 40);
-        }
-      };
-
-      // Wait 460ms for detail view exit transition (450ms) before centering the target card cleanly
-      const timer = setTimeout(attemptScroll, 460);
-      return () => {
-        cancelled = true;
-        clearTimeout(timer);
-      };
+    if (currentPage === 'home' || currentPage === 'my-list') {
+      if (savedScrollPos.current > 0) {
+        window.scrollTo({ top: savedScrollPos.current, left: 0, behavior: 'instant' as ScrollBehavior });
+        savedScrollPos.current = 0;
+      }
     }
-  }, [currentPage, page]);
+  }, [currentPage]);
 
   // Ensure scroll is at 0,0 when entering admin view
   useEffect(() => {
@@ -1376,14 +1479,25 @@ export default function App() {
   // --- PUBLIC HOME VIEW & TOP LEVEL PAGES ---
   return (
     <div className={`relative min-h-screen ${currentPage === 'detail' ? 'bg-[#08080a]' : 'bg-dark-bg'} text-white font-sans selection:bg-brand-red selection:text-white flex flex-col overflow-x-hidden border-0 outline-none`}>
-      <AnimatePresence mode="wait" initial={false}>
+      <AnimatePresence mode="popLayout" custom={navDirection} initial={false}>
         {currentPage === 'admin' ? (
           <motion.div
             key="admin"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.45 }}
+            custom={navDirection}
+            initial={(dir: number) => ({
+              opacity: 0,
+              x: dir >= 0 ? '100%' : '-100%'
+            })}
+            animate={{
+              opacity: 1,
+              x: 0
+            }}
+            exit={(dir: number) => ({
+              opacity: 0,
+              x: dir >= 0 ? '-100%' : '100%'
+            })}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            style={{ willChange: 'transform, opacity' }}
             className="w-full min-h-screen overflow-x-hidden"
           >
             {authLoading ? (
@@ -1408,13 +1522,56 @@ export default function App() {
               </React.Suspense>
             ) : null}
           </motion.div>
+        ) : currentPage === 'studio' && selectedStudio ? (
+          <motion.div
+            key={`studio-${selectedStudio.id}`}
+            custom={navDirection}
+            initial={(dir: number) => ({
+              opacity: 0,
+              x: dir >= 0 ? '100%' : '-100%'
+            })}
+            animate={{
+              opacity: 1,
+              x: 0
+            }}
+            exit={(dir: number) => ({
+              opacity: 0,
+              x: dir >= 0 ? '-100%' : '100%'
+            })}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            style={{ willChange: 'transform, opacity' }}
+            className="w-full min-h-screen overflow-x-hidden"
+          >
+            <StudioDetailModal
+              key={selectedStudio.id}
+              studio={selectedStudio}
+              onClose={() => navigateTo('home')}
+              animes={animes}
+              studios={studios}
+              onSelectAnime={(animeId) => {
+                setPreviousPage('studio');
+                navigateTo('detail', animeId);
+              }}
+            />
+          </motion.div>
         ) : currentPage === 'detail' && currentAnime ? (
           <motion.div
             key={`detail-${selectedAnimeId}`}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.35 }}
+            custom={navDirection}
+            initial={(dir: number) => ({
+              opacity: 0,
+              x: dir >= 0 ? '100%' : '-100%'
+            })}
+            animate={{
+              opacity: 1,
+              x: 0
+            }}
+            exit={(dir: number) => ({
+              opacity: 0,
+              x: dir >= 0 ? '-100%' : '100%'
+            })}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            style={{ willChange: 'transform, opacity' }}
             onAnimationComplete={() => setIsDetailAnimating(false)}
             className="w-full min-h-screen overflow-x-hidden"
           >
@@ -1426,9 +1583,12 @@ export default function App() {
               genres={genres}
               animes={animes}
               onBack={() => {
-                if (studioDetailStateRef.current?.studio) {
-                  setSelectedStudioForDetail(studioDetailStateRef.current.studio);
-                  navigateTo('home');
+                if (previousPage === 'studio' && selectedStudio) {
+                  navigateTo('studio', undefined, undefined, selectedStudio);
+                } else if (previousPage === 'my-list') {
+                  navigateTo('my-list');
+                } else if (previousPage === 'watched') {
+                  navigateTo('watched');
                 } else {
                   navigateTo('home');
                 }
@@ -1442,7 +1602,7 @@ export default function App() {
               onSelectStudio={(studioId) => {
                 const st = studios.find(s => s.id === studioId);
                 if (st) {
-                  setSelectedStudioForDetail(st);
+                  navigateTo('studio', undefined, undefined, st);
                 } else {
                   setSelectedStudioId(studioId);
                   setSelectedGenreIds([]);
@@ -1465,6 +1625,21 @@ export default function App() {
         ) : (
           <motion.div
             key="home-shell-view"
+            custom={navDirection}
+            initial={(dir: number) => ({
+              opacity: 0,
+              x: dir >= 0 ? '100%' : '-100%'
+            })}
+            animate={{
+              opacity: 1,
+              x: 0
+            }}
+            exit={(dir: number) => ({
+              opacity: 0,
+              x: dir >= 0 ? '-100%' : '100%'
+            })}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            style={{ willChange: 'transform, opacity' }}
             className="w-full min-h-screen flex flex-col"
           >
             {/* 1. Global Navigation Bar - Compact Dark Violet & Black */}
@@ -1567,17 +1742,18 @@ export default function App() {
                     custom={navDirection}
                     initial={(dir: number) => ({
                       opacity: 0,
-                      x: dir >= 0 ? 70 : -70,
+                      x: dir >= 0 ? '100%' : '-100%'
                     })}
                     animate={{
                       opacity: 1,
-                      x: 0,
+                      x: 0
                     }}
                     exit={(dir: number) => ({
                       opacity: 0,
-                      x: dir >= 0 ? -70 : 70,
+                      x: dir >= 0 ? '-100%' : '100%'
                     })}
-                    transition={{ duration: 0.32, ease: [0.25, 1, 0.5, 1] }}
+                    transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                    style={{ willChange: 'transform, opacity' }}
                     className="space-y-6"
                   >
                     {/* Back Button */}
@@ -1643,23 +1819,109 @@ export default function App() {
                       );
                     })()}
                   </motion.div>
+                ) : currentPage === 'watched' ? (
+                  <motion.div
+                    key="watched-view"
+                    custom={navDirection}
+                    initial={(dir: number) => ({
+                      opacity: 0,
+                      x: dir >= 0 ? '100%' : '-100%'
+                    })}
+                    animate={{
+                      opacity: 1,
+                      x: 0
+                    }}
+                    exit={(dir: number) => ({
+                      opacity: 0,
+                      x: dir >= 0 ? '-100%' : '100%'
+                    })}
+                    transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                    style={{ willChange: 'transform, opacity' }}
+                    className="space-y-6"
+                  >
+                    {/* Back Button */}
+                    <button
+                      onClick={() => navigateTo('home')}
+                      className="group inline-flex items-center gap-2 font-mono text-[10px] text-neutral-400 hover:text-emerald-400 uppercase tracking-widest transition-colors duration-300 cursor-pointer"
+                    >
+                      <ChevronLeft className="h-4 w-4 transition-transform duration-300 group-hover:-translate-x-1" />
+                      Galería
+                    </button>
+
+                    {/* Header Title & Subtitle */}
+                    <div className="space-y-2 pb-4">
+                      <h1 className="font-display font-bold text-2xl sm:text-3xl text-white tracking-tight flex items-center gap-2">
+                        <Eye className="h-6 w-6 text-emerald-400 shrink-0" />
+                        <span>ANIMES VISTOS</span>
+                        {watchedIds.length > 0 && (
+                          <span className="text-xs font-mono px-2.5 py-0.5 bg-emerald-500/20 text-emerald-300 rounded-full border border-emerald-500/30">
+                            {watchedIds.length}
+                          </span>
+                        )}
+                      </h1>
+                      <p className="font-mono text-xs text-neutral-400 max-w-2xl leading-relaxed">
+                        Historial de animes que has marcado como vistos.
+                      </p>
+                    </div>
+
+                    {/* Grid of Watched Animes */}
+                    {(() => {
+                      const watchedAnimes = animes.filter(a => watchedIds.includes(a.id));
+                      
+                      if (watchedAnimes.length === 0) {
+                        return (
+                          <div className="text-center py-16 px-4 bg-dark-card border border-dark-border rounded-2xl max-w-xl mx-auto my-8 space-y-3">
+                            <div className="flex justify-center pb-1"><Eye className="h-10 w-10 text-emerald-400/70" /></div>
+                            <p className="font-sans text-neutral-300 text-sm leading-relaxed whitespace-pre-line">
+                              No has marcado ningún anime como visto aún.{"\n\n"}
+                              Abre cualquier anime y pulsa '<span className="text-emerald-400 font-semibold">Visto</span>' para añadirlo a tu historial.
+                            </p>
+                            <div className="pt-2">
+                              <button
+                                onClick={() => navigateTo('home')}
+                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-mono font-medium transition-colors cursor-pointer"
+                              >
+                                Explorar catálogo
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-0.5 sm:gap-1">
+                          {watchedAnimes.map(anime => (
+                            <GalleryCard
+                              key={anime.id}
+                              anime={anime}
+                              studios={studios}
+                              onClick={() => navigateTo('detail', anime.id)}
+                            />
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </motion.div>
                 ) : (
                   <motion.div
                     key="gallery-home-view"
                     custom={navDirection}
                     initial={(dir: number) => ({
                       opacity: 0,
-                      x: dir >= 0 ? 70 : -70,
+                      x: dir >= 0 ? '100%' : '-100%',
+                      scale: 0.98
                     })}
                     animate={{
                       opacity: 1,
                       x: 0,
+                      scale: 1
                     }}
                     exit={(dir: number) => ({
                       opacity: 0,
-                      x: dir >= 0 ? -70 : 70,
+                      x: dir >= 0 ? '-35%' : '100%',
+                      scale: 0.98
                     })}
-                    transition={{ duration: 0.32, ease: [0.25, 1, 0.5, 1] }}
+                    transition={{ duration: 0.36, ease: [0.16, 1, 0.3, 1] }}
                     className="space-y-5"
                   >
         {/* Compact Top 3 Portadas Más Populares Section (Positioned above search bar) */}
@@ -1685,23 +1947,18 @@ export default function App() {
                   : (anime.studioId ? [anime.studioId] : []);
                 const studioName = studios.find(s => sIds.includes(s.id))?.name || 'Sin estudio';
                 return (
-                  <motion.div
+                  <div
                     key={anime.id}
                     onClick={() => navigateTo('detail', anime.id)}
-                    initial={{ scale: 0.88, opacity: 0.8 }}
-                    whileInView={{ scale: 1, opacity: 1 }}
-                    viewport={{ once: false, amount: 0.12 }}
-                    whileTap={{ scale: 0.96 }}
-                    whileHover={{ y: -4, scale: 1.03 }}
-                    transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-                    style={{ willChange: "transform, opacity" }}
                     title={anime.name}
-                    className="group relative aspect-[2/3] bg-neutral-900 rounded-xl overflow-hidden border border-[#272236] hover:border-[#ff5588]/70 shadow-md hover:shadow-lg hover:shadow-[#ff5588]/15 cursor-pointer block p-0 text-left touch-manipulation select-none transition-colors duration-300"
+                    className="group relative aspect-[2/3] bg-neutral-900 rounded-xl overflow-hidden border border-[#272236] hover:border-[#ff5588]/70 shadow-md hover:shadow-lg hover:shadow-[#ff5588]/15 cursor-pointer block p-0 text-left touch-manipulation select-none active:scale-[0.96] hover:-translate-y-0.5 transition-all duration-200"
                   >
                     <SmartAnimeCover
                       anime={anime}
                       studioName={studioName}
                       alt={anime.name}
+                      loading="eager"
+                      priority={true}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
                     {/* Subtle title overlay at bottom */}
@@ -1710,7 +1967,7 @@ export default function App() {
                         {anime.name}
                       </p>
                     </div>
-                  </motion.div>
+                  </div>
                 );
               })}
             </div>
@@ -1938,17 +2195,18 @@ export default function App() {
                   custom={pageDirection}
                   initial={(dir: number) => ({
                     opacity: 0,
-                    x: dir >= 0 ? 60 : -60,
+                    x: dir >= 0 ? '100%' : '-100%'
                   })}
                   animate={{
                     opacity: 1,
-                    x: 0,
+                    x: 0
                   }}
                   exit={(dir: number) => ({
                     opacity: 0,
-                    x: dir >= 0 ? -60 : 60,
+                    x: dir >= 0 ? '-100%' : '100%'
                   })}
-                  transition={{ duration: 0.32, ease: [0.25, 1, 0.5, 1] }}
+                  transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                  style={{ willChange: 'transform, opacity' }}
                   className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-0.5 sm:gap-1"
                 >
                   {currentPageItems.map((anime, idx) => (
@@ -2088,35 +2346,11 @@ export default function App() {
         onSelectRating={setSelectedRating}
         onSelectSortBy={setSortBy}
         onResetFilters={handleResetAllFilters}
+        onOpenStudio={(st) => {
+          setIsFilterModalOpen(false);
+          navigateTo('studio', undefined, undefined, st);
+        }}
       />
-
-      {/* Studio Fullscreen Detail Modal */}
-      {selectedStudioForDetail && (
-        <StudioDetailModal
-          key={selectedStudioForDetail.id}
-          studio={selectedStudioForDetail}
-          onClose={() => {
-            setSelectedStudioForDetail(null);
-            setStudioDetailState(null);
-            studioDetailStateRef.current = null;
-          }}
-          animes={animes}
-          studios={studios}
-          initialPage={studioDetailState && studioDetailState.studio.id === selectedStudioForDetail.id ? studioDetailState.page : 1}
-          initialScrollY={studioDetailState && studioDetailState.studio.id === selectedStudioForDetail.id ? studioDetailState.scrollY : 0}
-          onSelectAnime={(animeId, page, scrollY) => {
-            const state = {
-              studio: selectedStudioForDetail,
-              page,
-              scrollY
-            };
-            setStudioDetailState(state);
-            studioDetailStateRef.current = state;
-            setSelectedStudioForDetail(null);
-            navigateTo('detail', animeId);
-          }}
-        />
-      )}
 
       {/* Auth Modal */}
       <AuthModal
@@ -2125,15 +2359,21 @@ export default function App() {
       />
 
       {/* User Profile Window / Modal */}
-      <UserProfileModal
-        isOpen={isProfileModalOpen}
-        onClose={() => setIsProfileModalOpen(false)}
-        currentUser={currentUser}
-        myListCount={myListIds.length}
-        onOpenMyList={() => navigateTo('my-list')}
-        onLogout={handleLogout}
-        onUserUpdated={handleUserUpdated}
-      />
+      <AnimatePresence>
+        {isProfileModalOpen && (
+          <UserProfileModal
+            isOpen={isProfileModalOpen}
+            onClose={() => setIsProfileModalOpen(false)}
+            currentUser={currentUser}
+            myListCount={myListIds.length}
+            watchedCount={watchedIds.length}
+            onOpenMyList={() => navigateTo('my-list')}
+            onOpenWatched={() => navigateTo('watched')}
+            onLogout={handleLogout}
+            onUserUpdated={handleUserUpdated}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

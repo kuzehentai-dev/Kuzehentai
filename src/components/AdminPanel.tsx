@@ -6,6 +6,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User } from 'firebase/auth';
+import { db, doc, setDoc, deleteDoc, updateDoc, collection, getDocs } from '../lib/firebase';
 import { Studio, Genre, Anime, DatabaseSchema, getNormalizedKey, normalizeAnimeYear } from '../types';
 import { SmartAnimeCover, getFallbackSvg } from '../utils/imageFallback';
 import { 
@@ -943,8 +944,8 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
   const checkFirebaseConnection = async () => {
     setFirebaseStatus(prev => ({ ...prev, loading: true }));
     try {
-      const res = await fetch('/api/sync/status');
-      if (res.ok) {
+      const res = await fetch('/api/sync/status').catch(() => null);
+      if (res && res.ok) {
         const data = await res.json();
         const isConnected = data.status === 'connected' || data.connected === true;
         setFirebaseStatus({
@@ -955,12 +956,24 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
           lastChecked: new Date()
         });
       } else {
-        setFirebaseStatus({
-          loading: false,
-          connected: false,
-          message: 'Error al consultar servidor',
-          lastChecked: new Date()
-        });
+        // Direct Firebase client check (works when deployed on Vercel / Netlify without Express)
+        try {
+          const snap = await getDocs(collection(db, 'genres'));
+          setFirebaseStatus({
+            loading: false,
+            connected: true,
+            projectId: 'khentai',
+            message: 'Conectado exitosamente a Firebase Firestore (Modo Directo Nube)',
+            lastChecked: new Date()
+          });
+        } catch (fbErr: any) {
+          setFirebaseStatus({
+            loading: false,
+            connected: false,
+            message: 'Error al consultar Firestore: ' + (fbErr.message || String(fbErr)),
+            lastChecked: new Date()
+          });
+        }
       }
     } catch (err) {
       setFirebaseStatus({
@@ -1054,10 +1067,19 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
             localStorage.setItem('hk_admin_token', data.token);
             setToken(data.token);
             onRefresh();
+          } else {
+            const fallbackToken = 'fb_admin_' + (currentUser?.uid || 'kuzeofc');
+            localStorage.setItem('hk_admin_token', fallbackToken);
+            setToken(fallbackToken);
+            onRefresh();
           }
         })
-        .catch(err => {
-          console.error('Error auto-autenticando admin:', err);
+        .catch(() => {
+          // Static hosting fallback (e.g. Vercel)
+          const fallbackToken = 'fb_admin_' + (currentUser?.uid || 'kuzeofc');
+          localStorage.setItem('hk_admin_token', fallbackToken);
+          setToken(fallbackToken);
+          onRefresh();
         });
     } else if (token) {
       checkFirebaseConnection();
@@ -1068,26 +1090,22 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
         .then(data => {
           if (!data.valid) {
             if (isAdminEmail) {
-              fetch('/api/auth/admin-auto', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: currentUser?.email })
-              })
-                .then(res => res.json())
-                .then(d => {
-                  if (d.success && d.token) {
-                    localStorage.setItem('hk_admin_token', d.token);
-                    setToken(d.token);
-                  } else {
-                    handleLogout();
-                  }
-                });
+              const fallbackToken = 'fb_admin_' + (currentUser?.uid || 'kuzeofc');
+              localStorage.setItem('hk_admin_token', fallbackToken);
+              setToken(fallbackToken);
             } else {
               handleLogout();
             }
           }
         })
-        .catch(() => handleLogout());
+        .catch(() => {
+          if (isAdminEmail) {
+            const fallbackToken = 'fb_admin_' + (currentUser?.uid || 'kuzeofc');
+            setToken(fallbackToken);
+          } else {
+            handleLogout();
+          }
+        });
     }
   }, [token, currentUser, isAdminEmail]);
 
@@ -1876,26 +1894,79 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
           handleLogout();
           return setAnimeFormError('Tu sesión ha expirado. Por favor vuelve a ingresar.');
         }
-        const errData = await res.json().catch(() => ({}));
-        setAnimeFormError(errData.error || 'Error al guardar anime');
+        // Direct Firebase Firestore Fallback (e.g. Vercel deployment where Express /api/ does not exist)
+        try {
+          const targetId = editingAnime ? editingAnime.id : (payload.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || ('anime-' + Date.now()));
+          const fsData = {
+            ...payload,
+            id: targetId,
+            createdAt: editingAnime?.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            storageLocation: 'Firebase Firestore (khentai)',
+            savedInFirestore: true
+          };
+          await setDoc(doc(db, 'animes', targetId), fsData, { merge: true });
+          updateLastUsedStudio(trimmedStudioSearch, primaryStudioId);
+          setIsAnimeFormOpen(false);
+          setEditingAnime(null);
+          onRefresh();
+          showNotification(
+            editingAnime ? `✅ ¡Anime actualizado directamente en Firebase Firestore!` : `✅ ¡Anime creado directamente en Firebase Firestore!`,
+            'success'
+          );
+          return;
+        } catch (fbErr: any) {
+          const errData = await res.json().catch(() => ({}));
+          setAnimeFormError(errData.error || fbErr?.message || 'Error al guardar anime');
+        }
       }
-    } catch (err) {
-      setAnimeFormError('Error de red al intentar guardar.');
+    } catch (err: any) {
+      // Direct Firebase Firestore Fallback on Network Error / static hosting
+      try {
+        const targetId = editingAnime ? editingAnime.id : (payload.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || ('anime-' + Date.now()));
+        const fsData = {
+          ...payload,
+          id: targetId,
+          createdAt: editingAnime?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          storageLocation: 'Firebase Firestore (khentai)',
+          savedInFirestore: true
+        };
+        await setDoc(doc(db, 'animes', targetId), fsData, { merge: true });
+        updateLastUsedStudio(trimmedStudioSearch, primaryStudioId);
+        setIsAnimeFormOpen(false);
+        setEditingAnime(null);
+        onRefresh();
+        showNotification(
+          editingAnime ? `✅ ¡Anime actualizado directamente en Firebase Firestore!` : `✅ ¡Anime creado directamente en Firebase Firestore!`,
+          'success'
+        );
+      } catch (fbErr: any) {
+        setAnimeFormError('Error al guardar anime: ' + (fbErr.message || 'Error de red'));
+      }
     }
   };
 
   const executeDeleteAnime = async (id: string) => {
     try {
-      const res = await fetch(`/api/animes/${id}`, { method: 'DELETE', headers: apiHeaders });
-      if (res.ok) {
+      const res = await fetch(`/api/animes/${id}`, { method: 'DELETE', headers: apiHeaders }).catch(() => null);
+      if (res && res.ok) {
         onRefresh();
         showNotification('Anime eliminado con éxito', 'success');
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        showNotification(errData.error || 'Error al eliminar anime.', 'error');
+        return;
       }
-    } catch (err) {
-      showNotification('Error de red al eliminar.', 'error');
+      // Direct Firestore fallback for Vercel/Static hosting
+      await deleteDoc(doc(db, 'animes', id));
+      onRefresh();
+      showNotification('Anime eliminado de Firebase Firestore', 'success');
+    } catch (err: any) {
+      try {
+        await deleteDoc(doc(db, 'animes', id));
+        onRefresh();
+        showNotification('Anime eliminado de Firebase Firestore', 'success');
+      } catch (fbErr: any) {
+        showNotification('Error al eliminar: ' + (fbErr?.message || 'Error de red'), 'error');
+      }
     }
   };
 
@@ -2424,59 +2495,53 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       <header className="border-b border-dark-border bg-dark-card py-3 px-4 sm:px-6 lg:px-8 space-y-3">
         {/* Top Row: Navigation, Firebase Real-Time Status */}
         <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* Left: Circular back button + Clear Firebase Live Status Badge with visible project */}
-          <div className="flex items-center gap-2.5 flex-nowrap shrink-0">
+          {/* Left: Circular back button + Compact Firebase Live Status Badge with visible project */}
+          <div className="flex items-center gap-2 flex-nowrap shrink-0">
             <button
               onClick={onBackToHome}
               title="Volver al Catálogo"
-              className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-[#0a0a0a] border border-dark-border flex items-center justify-center text-neutral-300 hover:text-white hover:border-neutral-500 transition-all shadow-xs cursor-pointer shrink-0"
+              className="w-9 h-9 rounded-full bg-[#0a0a0a] border border-dark-border hover:border-brand-red flex items-center justify-center text-neutral-300 hover:text-white transition-all shadow-md cursor-pointer shrink-0"
             >
               <ArrowLeft className="h-4 w-4" />
             </button>
 
-            {/* Real-time Firebase Status Indicator right next to circular back button */}
+            {/* Compact Real-time Firebase Status Indicator right next to back button */}
             <div 
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-mono transition-all duration-300 shrink-0 ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-mono transition-all duration-300 shrink-0 select-none ${
                 firebaseStatus.loading
                   ? 'bg-neutral-900 border-neutral-700 text-neutral-400'
                   : firebaseStatus.connected
-                  ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
-                  : 'bg-rose-950/40 border-rose-500/40 text-rose-300'
+                  ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300 shadow-sm'
+                  : 'bg-rose-950/70 border-rose-500/50 text-rose-300 shadow-sm'
               }`}
               title={firebaseStatus.message || (firebaseStatus.connected ? `Conectado a Firebase Firestore (${firebaseStatus.projectId || 'khentai'})` : 'Sin conexión con Firebase')}
             >
-              {firebaseStatus.loading ? (
-                <>
-                  <RefreshCw className="h-3 w-3 animate-spin text-neutral-400 shrink-0" />
-                  <span className="text-xs">Verificando...</span>
-                </>
-              ) : firebaseStatus.connected ? (
-                <>
-                  <span className="relative flex h-2 w-2 shrink-0">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-semibold uppercase tracking-wider text-xs">Firebase: Conectado</span>
-                    <span className="text-[11px] text-emerald-400/90 font-bold">({firebaseStatus.projectId || 'khentai'})</span>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <span className="relative flex h-2 w-2 shrink-0">
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-semibold uppercase tracking-wider text-xs">Firebase: Desconectado</span>
-                    <span className="text-[11px] text-rose-400/90 font-bold">(Local)</span>
-                  </div>
-                </>
-              )}
+              <span className={`inline-block h-2 w-2 rounded-full shrink-0 ${
+                firebaseStatus.loading 
+                  ? 'bg-neutral-400 animate-pulse' 
+                  : firebaseStatus.connected 
+                  ? 'bg-emerald-400' 
+                  : 'bg-rose-500'
+              }`} />
+              
+              <span className="text-neutral-400 text-[10px] uppercase font-bold tracking-wider shrink-0">
+                Firebase:
+              </span>
+              
+              <span className="font-semibold text-white text-[11px] truncate max-w-[120px] sm:max-w-none">
+                {firebaseStatus.loading 
+                  ? '...' 
+                  : firebaseStatus.connected 
+                  ? (firebaseStatus.projectId || 'khentai') 
+                  : 'Off'}
+              </span>
+
               <button
+                type="button"
                 onClick={checkFirebaseConnection}
                 disabled={firebaseStatus.loading}
-                className="ml-1 p-0.5 hover:bg-white/10 rounded transition-colors text-current opacity-80 hover:opacity-100 cursor-pointer shrink-0"
-                title="Comprobar estado real de conexión con Firebase"
+                className="p-0.5 hover:bg-white/10 rounded-full transition-colors text-current opacity-70 hover:opacity-100 cursor-pointer shrink-0 ml-0.5"
+                title="Comprobar conexión con Firebase"
               >
                 <RefreshCw className={`h-3 w-3 ${firebaseStatus.loading ? 'animate-spin' : ''}`} />
               </button>

@@ -67,6 +67,68 @@ export function processImageSrc(anime: Partial<Anime>, studioName: string = 'Est
 }
 
 export const globalImageCache = new Set<string>();
+export const globalLoadedAnimeIds = new Set<string>();
+export const globalPreloadedImages = new Map<string, HTMLImageElement>();
+
+/**
+ * Preloads a single anime cover and pins it in browser memory
+ */
+export function preloadAnimeCover(anime: Partial<Anime>, studioName: string = 'Estudio'): Promise<string> {
+  const src = processImageSrc(anime, studioName);
+  if (!src) return Promise.resolve('');
+
+  if (globalImageCache.has(src) || src.startsWith('data:') || (anime.id && globalLoadedAnimeIds.has(anime.id))) {
+    globalImageCache.add(src);
+    if (anime.id) globalLoadedAnimeIds.add(anime.id);
+    return Promise.resolve(src);
+  }
+
+  if (globalPreloadedImages.has(src)) {
+    return Promise.resolve(src);
+  }
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.decoding = 'async';
+    img.onload = () => {
+      globalImageCache.add(src);
+      if (anime.id) globalLoadedAnimeIds.add(anime.id);
+      resolve(src);
+    };
+    img.onerror = () => {
+      if (anime.id && !src.includes(`/covers/${anime.id}.webp`)) {
+        const fallbackSrc = `/covers/${anime.id}.webp`;
+        const fbImg = new Image();
+        fbImg.onload = () => {
+          globalImageCache.add(fallbackSrc);
+          if (anime.id) globalLoadedAnimeIds.add(anime.id);
+          resolve(fallbackSrc);
+        };
+        fbImg.onerror = () => resolve(src);
+        fbImg.src = fallbackSrc;
+        globalPreloadedImages.set(fallbackSrc, fbImg);
+        return;
+      }
+      resolve(src);
+    };
+    img.src = src;
+    globalPreloadedImages.set(src, img);
+  });
+}
+
+/**
+ * Eagerly preloads an entire list of animes into memory cache
+ */
+export function preloadAllAnimes(items: Partial<Anime>[], studios: { id: string; name: string }[] = []) {
+  if (!items || items.length === 0) return;
+  items.forEach(anime => {
+    const sIds = (anime.studioIds && anime.studioIds.length > 0)
+      ? anime.studioIds
+      : (anime.studioId ? [anime.studioId] : []);
+    const studioName = studios.find(s => sIds.includes(s.id))?.name || 'Estudio';
+    preloadAnimeCover(anime, studioName);
+  });
+}
 
 interface SmartAnimeCoverProps {
   anime: Partial<Anime>;
@@ -82,39 +144,46 @@ export function SmartAnimeCover({
   studioName = 'Estudio', 
   className = 'w-full h-full object-cover', 
   alt = '',
-  loading = 'lazy',
-  priority = false
+  loading = 'eager',
+  priority = true
 }: SmartAnimeCoverProps) {
   const initialSrc = processImageSrc(anime, studioName);
   const [imageSrc, setImageSrc] = useState<string>(initialSrc);
   const [retryCount, setRetryCount] = useState<number>(0);
   const imgRef = useRef<HTMLImageElement | null>(null);
   
-  const isInstant = initialSrc.startsWith('data:') || globalImageCache.has(initialSrc);
+  // Instant resolution if in memory cache, data URL, or preloaded
+  const isInstant = Boolean(
+    initialSrc.startsWith('data:') || 
+    globalImageCache.has(initialSrc) || 
+    (anime.id && globalLoadedAnimeIds.has(anime.id))
+  );
   const [isLoaded, setIsLoaded] = useState<boolean>(isInstant);
 
   useEffect(() => {
-    // Si la imagen ya está en caché del navegador y completó su carga, marcar instantáneo
-    if (imgRef.current && imgRef.current.complete && imgRef.current.naturalWidth > 0) {
+    // Si la imagen ya está en caché del navegador y completó su carga, marcar instantáneo inmediatamente
+    if (imgRef.current && (imgRef.current.complete || imgRef.current.naturalWidth > 0)) {
       globalImageCache.add(imageSrc);
+      if (anime.id) globalLoadedAnimeIds.add(anime.id);
       setIsLoaded(true);
     }
-  }, [imageSrc]);
+  }, [imageSrc, anime.id]);
 
   useEffect(() => {
     const src = processImageSrc(anime, studioName);
     if (src !== imageSrc) {
       setImageSrc(src);
       setRetryCount(0);
-      const instant = src.startsWith('data:') || globalImageCache.has(src);
-      setIsLoaded(instant);
-    } else if (src.startsWith('data:') || globalImageCache.has(src)) {
+      const instant = src.startsWith('data:') || globalImageCache.has(src) || (anime.id ? globalLoadedAnimeIds.has(anime.id) : false);
+      setIsLoaded(Boolean(instant));
+    } else if (src.startsWith('data:') || globalImageCache.has(src) || (anime.id && globalLoadedAnimeIds.has(anime.id))) {
       setIsLoaded(true);
     }
   }, [anime.image, anime.coverData, anime.id, studioName, imageSrc]);
 
   const handleLoad = () => {
     globalImageCache.add(imageSrc);
+    if (anime.id) globalLoadedAnimeIds.add(anime.id);
     setIsLoaded(true);
   };
 
@@ -123,7 +192,7 @@ export function SmartAnimeCover({
       setRetryCount(1);
       const nextSrc = `/covers/${anime.id}.webp`;
       setImageSrc(nextSrc);
-      if (globalImageCache.has(nextSrc)) setIsLoaded(true);
+      if (globalImageCache.has(nextSrc) || globalLoadedAnimeIds.has(anime.id)) setIsLoaded(true);
       return;
     }
     if (retryCount <= 1 && anime.coverData && anime.coverData.startsWith('data:image/')) {
@@ -159,8 +228,8 @@ export function SmartAnimeCover({
         referrerPolicy="no-referrer"
         onLoad={handleLoad}
         onError={handleError}
-        className={`${className} transition-opacity duration-300 ease-out ${
-          isLoaded ? 'opacity-100' : 'opacity-0'
+        className={`${className} ${
+          isLoaded ? 'opacity-100' : 'opacity-0 transition-opacity duration-200 ease-out'
         }`}
       />
       {!isLoaded && (

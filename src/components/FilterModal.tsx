@@ -27,6 +27,7 @@ export interface FilterModalProps {
   onSelectRating: (rating: string) => void;
   onSelectSortBy: (sortBy: string) => void;
   onResetFilters: () => void;
+  onOpenStudio?: (studio: Studio) => void;
 }
 
 const SORT_OPTIONS = [
@@ -73,6 +74,7 @@ function FilterModal({
   onSelectRating,
   onSelectSortBy,
   onResetFilters,
+  onOpenStudio,
 }: FilterModalProps) {
   // Precalculate studio and genre counts
   const studioCounts = useMemo(() => {
@@ -410,21 +412,32 @@ function FilterModal({
                     {sortedStudios.map(st => {
                       const count = studioCounts[st.id] || 0;
                       return (
-                        <button
-                          key={st.id}
-                          type="button"
-                          onClick={() => onSelectStudio(selectedStudioId === st.id ? '' : st.id)}
-                          className={`px-2.5 py-1.5 text-xs rounded-lg border transition-all cursor-pointer font-sans flex items-center gap-1.5 ${
-                            selectedStudioId === st.id
-                              ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium'
-                              : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
-                          }`}
-                        >
-                          <span>{st.name}</span>
-                          {count > 0 && (
-                            <span className="text-[10px] opacity-60 font-mono">({count})</span>
+                        <div key={st.id} className="inline-flex items-center rounded-lg border border-[#281644] bg-[#160c29] overflow-hidden">
+                          <button
+                            type="button"
+                            onClick={() => onSelectStudio(selectedStudioId === st.id ? '' : st.id)}
+                            className={`px-2.5 py-1.5 text-xs transition-all cursor-pointer font-sans flex items-center gap-1.5 ${
+                              selectedStudioId === st.id
+                                ? 'bg-[#a855f7] text-white font-medium'
+                                : 'text-neutral-300 hover:text-white hover:bg-white/5'
+                            }`}
+                          >
+                            <span>{st.name}</span>
+                            {count > 0 && (
+                              <span className="text-[10px] opacity-60 font-mono">({count})</span>
+                            )}
+                          </button>
+                          {onOpenStudio && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenStudio(st)}
+                              title={`Abrir apartado del estudio ${st.name}`}
+                              className="px-2 py-1.5 text-purple-400 hover:text-white hover:bg-purple-900/50 border-l border-[#281644] text-[10px] cursor-pointer"
+                            >
+                              Catálogo
+                            </button>
                           )}
-                        </button>
+                        </div>
                       );
                     })}
                   </div>

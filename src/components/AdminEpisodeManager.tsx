@@ -319,11 +319,16 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
         isNew: Boolean(editingEpisode.isNew),
         addedToRecentAt: finalAddedToRecentAt,
         coverImage: (editingEpisode.isNew && editingEpisode.coverImage) ? String(editingEpisode.coverImage) : undefined,
+        thumbnail: existingEp?.thumbnail,
         title: editingEpisode.title || existingEp?.title
       };
 
       if (targetIdx >= 0) {
-        existing[targetIdx] = { ...existing[targetIdx], ...updatedItem };
+        existing[targetIdx] = {
+          ...existing[targetIdx],
+          ...updatedItem,
+          thumbnail: existingEp?.thumbnail || existing[targetIdx].thumbnail
+        };
       } else {
         existing.push(updatedItem);
       }
