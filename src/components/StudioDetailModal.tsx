@@ -203,13 +203,19 @@ export default function StudioDetailModal({
       const duration = Date.now() - startTime;
       startTime = 0;
 
-      // Deslizamiento horizontal (Swipe como en galería de fotos):
-      // Deslizar de IZQUIERDA a DERECHA (Swipe Right) sale directamente al catálogo principal con 1 solo gesto
+      // Deslizamiento horizontal:
+      // Deslizar de IZQUIERDA a DERECHA (Swipe Right):
+      // Si está en la página 2 o superior, vuelve a la página anterior del estudio (idéntico al catálogo)
+      // Si está en la primera página (página 1), sale del estudio y regresa al anime previo o al catálogo
       if (deltaX > 45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.15 && duration < 800) {
         try {
           if (navigator.vibrate) navigator.vibrate(20);
         } catch {}
-        onClose();
+        if (page > 1) {
+          handlePageChange(page - 1);
+        } else {
+          onClose();
+        }
       }
       // Deslizar de DERECHA a IZQUIERDA (Swipe Left) avanza a la siguiente página del estudio si existe
       else if (deltaX < -45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.15 && duration < 800) {
@@ -352,17 +358,33 @@ export default function StudioDetailModal({
             ref={catalogTopRef} 
             className="flex items-center justify-between gap-3 pb-1"
           >
-            {/* Lado izquierdo: Selector para organizar animes con esquinas redondeadas */}
+            {/* Lado izquierdo: Selector para organizar animes compacto y con diseño idéntico al contador */}
             <div className="flex items-center">
-              <div className="relative inline-flex items-center h-6 sm:h-7">
-                <ArrowUpDown className="absolute left-2.5 h-3 w-3 text-purple-400 pointer-events-none" />
+              <div className="relative inline-flex items-center">
+                <div className="h-6 sm:h-7 px-3 inline-flex items-center gap-1.5 rounded-full bg-[#180c2e] hover:bg-[#22103d] text-purple-200 font-mono text-[11px] sm:text-xs font-bold pointer-events-none select-none transition-colors">
+                  <ArrowUpDown className="h-3 w-3 text-purple-400 shrink-0" />
+                  <span>
+                    {sortBy === 'name-asc'
+                      ? 'A - Z'
+                      : sortBy === 'name-desc'
+                      ? 'Z - A'
+                      : sortBy === 'rating-desc'
+                      ? 'Puntos'
+                      : sortBy === 'rating-asc'
+                      ? 'Menor'
+                      : sortBy === 'date-desc'
+                      ? 'Nuevos'
+                      : 'Antiguos'}
+                  </span>
+                  <ChevronRight className="h-3 w-3 rotate-90 text-purple-400 shrink-0" />
+                </div>
                 <select
                   value={sortBy}
                   onChange={(e) => {
                     setSortBy(e.target.value as any);
                     setPage(1);
                   }}
-                  className="h-6 sm:h-7 bg-[#180c2e] hover:bg-[#22103d] text-white text-[11px] font-mono rounded-full pl-7 pr-6 outline-none cursor-pointer transition-colors appearance-none flex items-center"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                   aria-label="Organizar animes"
                 >
                   <option value="name-asc">Nombre (A a Z)</option>
@@ -372,7 +394,6 @@ export default function StudioDetailModal({
                   <option value="date-desc">Fecha (Más recientes)</option>
                   <option value="date-asc">Fecha (Más antiguos)</option>
                 </select>
-                <ChevronRight className="absolute right-2 h-3 w-3 rotate-90 text-purple-400 pointer-events-none" />
               </div>
             </div>
 

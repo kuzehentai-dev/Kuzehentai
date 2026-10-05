@@ -34,6 +34,7 @@ import UserProfileModal from './components/UserProfileModal';
 
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
 import { SmartAnimeCover, processImageSrc, globalImageCache, preloadAllAnimes, preloadAnimeCover } from './utils/imageFallback';
+import { normalizeEpisodesList } from './utils/episodeUtils';
 import { getAnimeRatingStats } from './utils/ratingManager';
 import { 
   Search, Film, Info, Plus, ChevronDown, Check, Send, AlertCircle, 
@@ -377,6 +378,10 @@ export default function App() {
   // Search & Filters state
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [returnAnimeId, setReturnAnimeId] = useState<string>('');
+  const returnAnimeOriginPageRef = useRef<PageType>('home');
+  const studioPageRef = useRef<number>(1);
+  const studioScrollRef = useRef<number>(0);
   const [selectedStudioId, setSelectedStudioId] = useState('');
   const [selectedGenreIds, setSelectedGenreIds] = useState<string[]>([]);
   const [selectedYear, setSelectedYear] = useState('');
@@ -510,19 +515,23 @@ export default function App() {
         if (contentType.includes('application/json')) {
           const data = await bootstrapRes.json();
           if (data && Array.isArray(data.studios) && Array.isArray(data.genres) && Array.isArray(data.animes)) {
+            const normalizedAnimes = data.animes.map((a: any) => ({
+              ...a,
+              episodes: normalizeEpisodesList(a.episodes)
+            }));
             setStudios(data.studios);
             setGenres(data.genres);
-            setAnimes(data.animes);
+            setAnimes(normalizedAnimes);
             try {
               sessionStorage.setItem('hk_cached_studios', JSON.stringify(data.studios));
               sessionStorage.setItem('hk_cached_genres', JSON.stringify(data.genres));
-              sessionStorage.setItem('hk_cached_animes', JSON.stringify(data.animes));
+              sessionStorage.setItem('hk_cached_animes', JSON.stringify(normalizedAnimes));
               localStorage.setItem('hk_cached_studios', JSON.stringify(data.studios));
               localStorage.setItem('hk_cached_genres', JSON.stringify(data.genres));
-              localStorage.setItem('hk_cached_animes', JSON.stringify(data.animes));
+              localStorage.setItem('hk_cached_animes', JSON.stringify(normalizedAnimes));
             } catch (e) {}
             // Eagerly prime all anime covers into memory cache
-            preloadAllAnimes(data.animes, data.studios);
+            preloadAllAnimes(normalizedAnimes, data.studios);
             return;
           }
         }
@@ -564,7 +573,12 @@ export default function App() {
         if (contentType.includes('application/json')) {
           try {
             const dataAnimes = await resAnimes.json();
-            if (Array.isArray(dataAnimes)) loadedAnimes = dataAnimes;
+            if (Array.isArray(dataAnimes)) {
+              loadedAnimes = dataAnimes.map((a: any) => ({
+                ...a,
+                episodes: normalizeEpisodesList(a.episodes)
+              }));
+            }
           } catch (e) {}
         }
       }
@@ -588,10 +602,10 @@ export default function App() {
                 id: docSnap.id,
                 name: d.name || '',
                 image: d.image || '',
-                coverData: d.coverData || undefined,
+                coverData: d.coverData || (d.image && typeof d.image === 'string' && d.image.startsWith('data:') ? d.image : undefined),
                 year: d.year || '',
                 telegramUrl: d.telegramUrl || '',
-                episodes: d.episodes || [],
+                episodes: normalizeEpisodesList(d.episodes),
                 studioId: d.studioId || '',
                 studioIds: d.studioIds || (d.studioId ? [d.studioId] : []),
                 genreIds: d.genreIds || [],
@@ -797,9 +811,10 @@ export default function App() {
     nextPage: PageType,
     animeId = '',
     episodeNum?: number,
-    studio?: Studio | null
+    studio?: Studio | null,
+    originPage?: PageType
   ) => {
-    const prev = currentPage;
+    const prev = originPage !== undefined ? originPage : currentPage;
     setPreviousPage(prev);
 
     if (nextPage === 'admin') {
@@ -817,8 +832,10 @@ export default function App() {
       setNavDirection(-1);
     }
 
-    if (studio) {
+    if (studio !== undefined) {
       setSelectedStudio(studio);
+    } else if (nextPage === 'home' || nextPage === 'my-list' || nextPage === 'watched') {
+      setSelectedStudio(null);
     }
 
     // Save current scroll Y and anime ID when entering detail view
@@ -1545,12 +1562,32 @@ export default function App() {
             <StudioDetailModal
               key={selectedStudio.id}
               studio={selectedStudio}
-              onClose={() => navigateTo('home')}
+              initialPage={studioPageRef.current}
+              initialScrollY={studioScrollRef.current}
+              onClose={() => {
+                studioPageRef.current = 1;
+                studioScrollRef.current = 0;
+                if (returnAnimeId) {
+                  const targetAnime = returnAnimeId;
+                  const origin = returnAnimeOriginPageRef.current || 'home';
+                  setReturnAnimeId('');
+                  setSelectedStudio(null);
+                  navigateTo('detail', targetAnime, undefined, null, origin);
+                } else if (previousPage === 'detail' && selectedAnimeId) {
+                  const origin = returnAnimeOriginPageRef.current || 'home';
+                  setSelectedStudio(null);
+                  navigateTo('detail', selectedAnimeId, undefined, null, origin);
+                } else {
+                  setSelectedStudio(null);
+                  navigateTo('home');
+                }
+              }}
               animes={animes}
               studios={studios}
-              onSelectAnime={(animeId) => {
-                setPreviousPage('studio');
-                navigateTo('detail', animeId);
+              onSelectAnime={(animeId, page, scrollY) => {
+                studioPageRef.current = page || 1;
+                studioScrollRef.current = scrollY || 0;
+                navigateTo('detail', animeId, undefined, selectedStudio, 'studio');
               }}
             />
           </motion.div>
@@ -1602,6 +1639,8 @@ export default function App() {
               onSelectStudio={(studioId) => {
                 const st = studios.find(s => s.id === studioId);
                 if (st) {
+                  setReturnAnimeId(currentAnime.id);
+                  returnAnimeOriginPageRef.current = (previousPage === 'studio') ? 'home' : previousPage;
                   navigateTo('studio', undefined, undefined, st);
                 } else {
                   setSelectedStudioId(studioId);

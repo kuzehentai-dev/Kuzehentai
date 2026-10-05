@@ -881,7 +881,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
 
   const [selectedAnimeDetails, setSelectedAnimeDetails] = useState<Anime | null>(null);
 
-  // Firebase Live Connection Status state
+  // Firebase Live Connection Status state - starts in active live verification
   const [firebaseStatus, setFirebaseStatus] = useState<{
     loading: boolean;
     connected: boolean;
@@ -890,7 +890,8 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
     lastChecked?: Date;
   }>({
     loading: true,
-    connected: false
+    connected: false,
+    projectId: 'khentai'
   });
 
   // Firebase Quotas & Storage State
@@ -944,42 +945,64 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
   const checkFirebaseConnection = async () => {
     setFirebaseStatus(prev => ({ ...prev, loading: true }));
     try {
-      const res = await fetch('/api/sync/status').catch(() => null);
-      if (res && res.ok) {
-        const data = await res.json();
-        const isConnected = data.status === 'connected' || data.connected === true;
-        setFirebaseStatus({
-          loading: false,
-          connected: isConnected,
-          projectId: data.projectId || 'khentai',
-          message: isConnected ? 'Conectado exitosamente a Firebase Firestore' : (data.message || 'Sin conexión activa con Firebase'),
-          lastChecked: new Date()
-        });
-      } else {
-        // Direct Firebase client check (works when deployed on Vercel / Netlify without Express)
-        try {
-          const snap = await getDocs(collection(db, 'genres'));
+      // 1. Direct Firebase Firestore client check with 6s timeout (tests live network read from Firestore)
+      const directCheckPromise = (async () => {
+        const snap = await getDocs(collection(db, 'genres'));
+        return snap;
+      })();
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Tiempo de espera agotado al conectar con Firestore (timeout)')), 6000)
+      );
+
+      try {
+        const snap = await Promise.race([directCheckPromise, timeoutPromise]) as any;
+        if (snap) {
           setFirebaseStatus({
             loading: false,
             connected: true,
             projectId: 'khentai',
-            message: 'Conectado exitosamente a Firebase Firestore (Modo Directo Nube)',
+            message: 'Conectado exitosamente en tiempo real a Firebase Firestore (khentai)',
             lastChecked: new Date()
           });
-        } catch (fbErr: any) {
+          return;
+        }
+      } catch (fbErr: any) {
+        console.warn('[Direct Firestore Check Warning]:', fbErr?.message || fbErr);
+      }
+
+      // 2. Fallback check via Express API if running on a full server
+      const res = await fetch('/api/sync/status').catch(() => null);
+      if (res && res.ok) {
+        const ct = res.headers.get('content-type') || '';
+        if (ct.includes('application/json')) {
+          const data = await res.json();
+          const isConnected = data.status === 'connected' || data.connected === true;
           setFirebaseStatus({
             loading: false,
-            connected: false,
-            message: 'Error al consultar Firestore: ' + (fbErr.message || String(fbErr)),
+            connected: isConnected,
+            projectId: data.projectId || 'khentai',
+            message: isConnected ? 'Conectado exitosamente a Firebase Firestore' : (data.message || 'Sin conexión activa con Firebase'),
             lastChecked: new Date()
           });
+          return;
         }
       }
-    } catch (err) {
+
+      // 3. If neither worked:
       setFirebaseStatus({
         loading: false,
         connected: false,
-        message: 'Fallo de red al verificar Firebase',
+        projectId: 'khentai',
+        message: 'Sin conexión activa con Firebase Firestore',
+        lastChecked: new Date()
+      });
+    } catch (err: any) {
+      setFirebaseStatus({
+        loading: false,
+        connected: false,
+        projectId: 'khentai',
+        message: 'Error al verificar Firebase: ' + (err?.message || 'Error de conexión'),
         lastChecked: new Date()
       });
     }
@@ -1051,6 +1074,11 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       document.documentElement.scrollTop = 0;
       document.body.scrollTop = 0;
     });
+  }, []);
+
+  // Check Firebase connection immediately upon entering admin panel
+  useEffect(() => {
+    checkFirebaseConnection();
   }, []);
 
   useEffect(() => {
