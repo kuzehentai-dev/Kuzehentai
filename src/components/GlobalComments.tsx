@@ -429,11 +429,6 @@ export default function GlobalComments({ animeId, animeTitle, className = '' }: 
                             Admin
                           </span>
                         )}
-                        {comment.animeTitle && (
-                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-purple-950/80 text-purple-300 border border-purple-800/30 truncate max-w-[120px]">
-                            {comment.animeTitle}
-                          </span>
-                        )}
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">

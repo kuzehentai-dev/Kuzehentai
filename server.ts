@@ -78,6 +78,7 @@ export interface DatabaseSchema {
   userLists?: Record<string, string[]>;
   animeViews?: Record<string, number>;
   animeDownloads?: Record<string, number>;
+  trash?: string[];
 }
 
 export function getNormalizedKey(name: string): string {
@@ -370,9 +371,7 @@ function generateSvgPoster(title: string, studioName: string): string {
   return svg;
 }
 
-// --- Image Optimization Helper (Threshold 200 KB) ---
-// If > 200 KB, optimizes down to max 200 KB with highest possible visual fidelity
-// If <= 200 KB, retains pristine quality
+// --- Image Helper (Sin optimización ni pérdida de calidad) ---
 async function compressImageToWebpBuffer(imageStr: string): Promise<{ buffer: Buffer; mimeType: string; extension: string } | null> {
   if (!imageStr || typeof imageStr !== 'string' || imageStr.trim() === '') return null;
   const trimmed = imageStr.trim();
@@ -409,111 +408,13 @@ async function compressImageToWebpBuffer(imageStr: string): Promise<{ buffer: Bu
 
   if (!inputBuffer || inputBuffer.length === 0) return null;
 
-  const MAX_TARGET_BYTES = 200 * 1024; // 200 KB threshold
-
-  // If already <= 200 KB, preserve it untouched with 100% original quality
-  if (inputBuffer.length <= MAX_TARGET_BYTES) {
-    const ext = detectedMime.includes('webp') ? 'webp' : detectedMime.includes('png') ? 'png' : 'jpg';
-    return { buffer: inputBuffer, mimeType: detectedMime, extension: ext };
-  }
-
-  const sharp = await getSharp();
-  if (!sharp) {
-    return { buffer: inputBuffer, mimeType: detectedMime, extension: detectedMime.includes('webp') ? 'webp' : 'jpg' };
-  }
-
-  try {
-    // If the image is > 200 KB, optimize it down to <= 200 KB while maximizing resolution and clarity
-    let quality = 85;
-    let targetW = 480;
-    let targetH = 720;
-    let webpBuffer = await sharp(inputBuffer)
-      .resize(targetW, targetH, { fit: 'cover', position: 'center', withoutEnlargement: true })
-      .webp({ quality, effort: 4 })
-      .toBuffer();
-
-    // If still > 200 KB, progressively adjust quality to fit under the 200 KB threshold
-    while (webpBuffer.length > MAX_TARGET_BYTES && quality > 35) {
-      quality -= 6;
-      webpBuffer = await sharp(inputBuffer)
-        .resize(targetW, targetH, { fit: 'cover', position: 'center', withoutEnlargement: true })
-        .webp({ quality, effort: 5 })
-        .toBuffer();
-    }
-
-    // If still > 200 KB, scale dimensions down progressively
-    while (webpBuffer.length > MAX_TARGET_BYTES && targetW > 300) {
-      targetW = Math.round(targetW * 0.88);
-      targetH = Math.round(targetH * 0.88);
-      quality = Math.max(30, quality - 4);
-      webpBuffer = await sharp(inputBuffer)
-        .resize(targetW, targetH, { fit: 'cover', position: 'center', withoutEnlargement: true })
-        .webp({ quality, effort: 5 })
-        .toBuffer();
-    }
-
-    return { buffer: webpBuffer, mimeType: 'image/webp', extension: 'webp' };
-  } catch (err) {
-    try {
-      // JPEG fallback (enforcing <= 200 KB target)
-      let quality = 85;
-      let targetW = 450;
-      let targetH = 675;
-      let jpegBuffer = await sharp(inputBuffer)
-        .resize(targetW, targetH, { fit: 'cover', position: 'center', withoutEnlargement: true })
-        .jpeg({ quality, progressive: true })
-        .toBuffer();
-
-      while (jpegBuffer.length > MAX_TARGET_BYTES && quality > 35) {
-        quality -= 8;
-        jpegBuffer = await sharp(inputBuffer)
-          .resize(targetW, targetH, { fit: 'cover', position: 'center', withoutEnlargement: true })
-          .jpeg({ quality, progressive: true })
-          .toBuffer();
-      }
-
-      while (jpegBuffer.length > MAX_TARGET_BYTES && targetW > 300) {
-        targetW = Math.round(targetW * 0.88);
-        targetH = Math.round(targetH * 0.88);
-        quality = Math.max(30, quality - 5);
-        jpegBuffer = await sharp(inputBuffer)
-          .resize(targetW, targetH, { fit: 'cover', position: 'center', withoutEnlargement: true })
-          .jpeg({ quality, progressive: true })
-          .toBuffer();
-      }
-
-      return { buffer: jpegBuffer, mimeType: 'image/jpeg', extension: 'jpg' };
-    } catch (jErr) {
-      console.warn('[Cover Optimization] Sharp compression failed:', jErr);
-      return null;
-    }
-  }
+  const ext = detectedMime.includes('webp') ? 'webp' : detectedMime.includes('png') ? 'png' : 'jpg';
+  return { buffer: inputBuffer, mimeType: detectedMime, extension: ext };
 }
 
-// Safely optimize large episode thumbnails to fit within Firestore document limits
+// Sin optimización: conserva la portada intacta
 async function optimizeEpisodeCoverIfNeeded(coverStr: string): Promise<string> {
-  if (!coverStr || typeof coverStr !== 'string') return '';
-  if (!coverStr.startsWith('data:image/')) return coverStr;
-  const commaIdx = coverStr.indexOf(',');
-  if (commaIdx < 0) return coverStr;
-  const base64Data = coverStr.slice(commaIdx + 1);
-  const estBytes = Math.floor(base64Data.length * 0.75);
-  // If already <= 100 KB, keep original untouched
-  if (estBytes <= 100 * 1024) return coverStr;
-
-  try {
-    const sharp = await getSharp();
-    if (!sharp) return coverStr;
-    const inputBuf = Buffer.from(base64Data, 'base64');
-    const optimizedBuf = await sharp(inputBuf)
-      .resize(640, 360, { fit: 'cover', withoutEnlargement: true })
-      .webp({ quality: 80, effort: 3 })
-      .toBuffer();
-    return `data:image/webp;base64,${optimizedBuf.toString('base64')}`;
-  } catch (err) {
-    console.warn('[Episode Cover] Sharp compression fallback:', err);
-    return coverStr;
-  }
+  return coverStr || '';
 }
 
 // --- Episode Normalization & Safe Merge Helpers ---
@@ -549,9 +450,9 @@ function normalizeEpisodesList(eps: any): Episode[] {
             url: link,
             videoUrl: link,
             link: link,
+            isNew: Boolean(ep.isNew),
             ...(ep.title ? { title: String(ep.title) } : {}),
             ...(ep.name ? { name: String(ep.name) } : {}),
-            ...(ep.isNew ? { isNew: true } : {}),
             ...(ep.coverImage ? { coverImage: String(ep.coverImage) } : {}),
             ...(ep.thumbnail ? { thumbnail: String(ep.thumbnail) } : {}),
             ...(ep.addedToRecentAt ? { addedToRecentAt: String(ep.addedToRecentAt) } : {})
@@ -591,11 +492,11 @@ function normalizeEpisodesList(eps: any): Episode[] {
           url: link,
           videoUrl: link,
           link: link,
+          isNew: Boolean(isNew),
           ...(title ? { title } : {}),
-          ...(isNew ? { isNew: true } : {}),
           ...(coverImage ? { coverImage } : {}),
           ...(thumbnail ? { thumbnail } : {}),
-          ...(addedToRecentAt ? { addedToRecentAt } : {})
+          ...(addedToRecentAt ? { addedToRecentAt: String(addedToRecentAt) } : {})
         });
       }
     });
@@ -610,18 +511,14 @@ function serializeEpisodesForStorage(eps: any): Record<string, any> {
   const map: Record<string, any> = {};
   norm.forEach(ep => {
     const link = ep.mp4Url || ep.telegramUrl || ep.url || ep.videoUrl || '';
-    if (ep.title || ep.isNew || ep.coverImage || ep.thumbnail || ep.addedToRecentAt) {
-      map[String(ep.number)] = { 
-        mp4Url: link, 
-        ...(ep.title ? { title: ep.title } : {}),
-        ...(ep.isNew ? { isNew: true } : {}),
-        ...(ep.coverImage ? { coverImage: ep.coverImage } : {}),
-        ...(ep.thumbnail ? { thumbnail: ep.thumbnail } : {}),
-        ...(ep.addedToRecentAt ? { addedToRecentAt: ep.addedToRecentAt } : {})
-      };
-    } else {
-      map[String(ep.number)] = link;
-    }
+    map[String(ep.number)] = { 
+      mp4Url: link, 
+      isNew: Boolean(ep.isNew),
+      ...(ep.title ? { title: ep.title } : {}),
+      ...(ep.coverImage ? { coverImage: ep.coverImage } : {}),
+      ...(ep.thumbnail ? { thumbnail: ep.thumbnail } : {}),
+      ...(ep.addedToRecentAt ? { addedToRecentAt: ep.addedToRecentAt } : {})
+    };
   });
   return map;
 }
@@ -894,26 +791,19 @@ class DBService {
         }
       }
 
-      // Si la imagen pesa <= 200 KB, no se optimiza: se guarda y se conserva 100% como está
-      if (estBytes > 0 && estBytes <= MAX_TARGET_BYTES) {
-        const parts = candidate.split(';base64,');
-        if (parts.length === 2) {
-          const targetDiskPath = path.join(COVERS_DIR, `${animeId}.${detectedExt}`);
-          if (!fs.existsSync(targetDiskPath)) {
-            try {
-              fs.writeFileSync(targetDiskPath, Buffer.from(parts[1], 'base64'));
-            } catch (e) {}
-          }
-          if (detectedExt === 'webp' && !fs.existsSync(localWebpPath)) {
-            try {
-              fs.writeFileSync(localWebpPath, Buffer.from(parts[1], 'base64'));
-            } catch (e) {}
-          }
-        }
+      // Sin optimización: se conserva 100% original
+      const parts = candidate.split(';base64,');
+      if (parts.length === 2) {
+        const targetDiskPath = path.join(COVERS_DIR, `${animeId}.${detectedExt}`);
+        try {
+          fs.writeFileSync(targetDiskPath, Buffer.from(parts[1], 'base64'));
+        } catch (e) {}
+        try {
+          fs.writeFileSync(localWebpPath, Buffer.from(parts[1], 'base64'));
+        } catch (e) {}
         return { imageUrl: publicUrlPath, coverData: candidate };
       }
 
-      // Solo si excede 200 KB (> 200 KB), se optimiza a un máximo de 200 KB
       const optResult = await compressImageToWebpBuffer(candidate);
       if (optResult && optResult.buffer) {
         try {
@@ -922,22 +812,12 @@ class DBService {
         const finalCoverData = `data:${optResult.mimeType};base64,` + optResult.buffer.toString('base64');
         return { imageUrl: publicUrlPath, coverData: finalCoverData };
       }
+      return { imageUrl: publicUrlPath, coverData: candidate };
     }
 
     // 2. If no candidate string provided, inspect file on disk
     if (fs.existsSync(localWebpPath)) {
       try {
-        const stat = fs.statSync(localWebpPath);
-        if (stat.size > MAX_TARGET_BYTES) {
-          // File on disk exceeds 200 KB: optimize it now!
-          const diskBuf = fs.readFileSync(localWebpPath);
-          const optResult = await compressImageToWebpBuffer('data:image/webp;base64,' + diskBuf.toString('base64'));
-          if (optResult && optResult.buffer) {
-            fs.writeFileSync(localWebpPath, optResult.buffer);
-            const finalCoverData = `data:${optResult.mimeType};base64,` + optResult.buffer.toString('base64');
-            return { imageUrl: publicUrlPath, coverData: finalCoverData };
-          }
-        }
         const diskBuf = fs.readFileSync(localWebpPath);
         return { imageUrl: publicUrlPath, coverData: 'data:image/webp;base64,' + diskBuf.toString('base64') };
       } catch (e) {}
@@ -948,12 +828,7 @@ class DBService {
     if (fs.existsSync(localJpgPath)) {
       try {
         const diskBuf = fs.readFileSync(localJpgPath);
-        const optResult = await compressImageToWebpBuffer('data:image/jpeg;base64,' + diskBuf.toString('base64'));
-        if (optResult && optResult.buffer) {
-          fs.writeFileSync(localWebpPath, optResult.buffer);
-          const finalCoverData = `data:${optResult.mimeType};base64,` + optResult.buffer.toString('base64');
-          return { imageUrl: publicUrlPath, coverData: finalCoverData };
-        }
+        return { imageUrl: publicUrlPath, coverData: 'data:image/jpeg;base64,' + diskBuf.toString('base64') };
       } catch (e) {}
     }
 
@@ -978,61 +853,9 @@ class DBService {
     return { imageUrl: publicUrlPath, coverData };
   }
 
-  // --- Scans all anime covers in database and ensures none exceed 200 KB ---
+  // --- Auto-optimization disabled (imagenes 100% originales) ---
   async autoOptimizeOversizedCovers(): Promise<{ optimizedCount: number; freedBytes: number }> {
-    this.init();
-    let count = 0;
-    let freedBytes = 0;
-    const MAX_TARGET_BYTES = 200 * 1024;
-
-    for (const anime of this.localDb.animes) {
-      if (!anime.id) continue;
-      let needsOptimization = false;
-      let inputStr = '';
-      let initialSize = 0;
-
-      if (anime.coverData && anime.coverData.startsWith('data:image/')) {
-        const parts = anime.coverData.split(';base64,');
-        const estBytes = parts.length === 2 ? Math.floor(parts[1].length * 0.75) : 0;
-        // Solo se optimiza si la portada excede los 200 KB (> 200 KB). Si pesa <= 200 KB se conserva intacta
-        if (estBytes > MAX_TARGET_BYTES) {
-          needsOptimization = true;
-          inputStr = anime.coverData;
-          initialSize = estBytes;
-        }
-      }
-
-      const localPath = path.join(COVERS_DIR, `${anime.id}.webp`);
-      if (!needsOptimization && fs.existsSync(localPath)) {
-        try {
-          const stats = fs.statSync(localPath);
-          if (stats.size > MAX_TARGET_BYTES) {
-            needsOptimization = true;
-            inputStr = 'data:image/webp;base64,' + fs.readFileSync(localPath).toString('base64');
-            initialSize = stats.size;
-          }
-        } catch (e) {}
-      }
-
-      if (needsOptimization && inputStr) {
-        try {
-          const res = await this.processAndStoreCover(anime.id, inputStr, anime.name, 'Estudio');
-          anime.image = res.imageUrl;
-          anime.coverData = res.coverData;
-          const newBytes = res.coverData ? Math.floor(res.coverData.split(';base64,')[1]?.length * 0.75) : 0;
-          if (initialSize > newBytes) freedBytes += (initialSize - newBytes);
-          count++;
-        } catch (err) {
-          console.warn(`Error al optimizar portada de "${anime.name}":`, err);
-        }
-      }
-    }
-
-    if (count > 0) {
-      this.saveLocal();
-      console.log(`✨ [Optimización de Portadas] ${count} portadas que superaban 200 KB fueron reducidas a <= 200 KB (Ahorro: ${(freedBytes / (1024 * 1024)).toFixed(2)} MB).`);
-    }
-    return { optimizedCount: count, freedBytes };
+    return { optimizedCount: 0, freedBytes: 0 };
   }
 
   // --- Studio Operations ---
@@ -1459,6 +1282,9 @@ class DBService {
       anime.createdAt = anime.createdAt || new Date().toISOString();
     }
     anime.updatedAt = new Date().toISOString();
+    if (anime.status === 'Emisión' || anime.status === 'En Emisión') {
+      anime.status = 'Próximamente';
+    }
 
     const sIds = (anime.studioIds && anime.studioIds.length > 0)
       ? anime.studioIds
@@ -1678,6 +1504,13 @@ class DBService {
 
   async deleteAnime(id: string): Promise<boolean> {
     this.init();
+    const existing = this.localDb.animes.find(a => a.id === id);
+    if (existing && existing.name) {
+      if (!this.localDb.trash) this.localDb.trash = [];
+      if (!this.localDb.trash.includes(existing.name)) {
+        this.localDb.trash.unshift(existing.name);
+      }
+    }
     this.localDb.animes = this.localDb.animes.filter(a => a.id !== id);
     this.saveLocal();
 
@@ -1693,6 +1526,19 @@ class DBService {
 
     await this.safeFirestoreOp(() => deleteDoc(doc(firestoreDb, 'animes', id)));
     return true;
+  }
+
+  getTrash(): string[] {
+    this.init();
+    return this.localDb.trash || [];
+  }
+
+  emptyTrash(): number {
+    this.init();
+    const count = (this.localDb.trash || []).length;
+    this.localDb.trash = [];
+    this.saveLocal();
+    return count;
   }
 
   // --- User Saved Lists Operations (Firebase Persistent "Mi Lista") ---
@@ -3404,7 +3250,10 @@ app.post('/api/admin/anime/:id/episodes', async (req, res) => {
     const existing = animes.find(a => a.id === id);
     if (!existing) return res.status(404).json({ error: 'Anime no encontrado' });
 
-    const newStatus = status || existing.status;
+    let newStatus = status || existing.status;
+    if (newStatus === 'Emisión' || newStatus === 'En Emisión') {
+      newStatus = 'Próximamente';
+    }
     const isFinalizado = newStatus === 'Finalizado';
 
     let processedEpisodes = Array.isArray(episodes) ? episodes : [];
@@ -3493,6 +3342,24 @@ app.delete('/api/animes/:id', authRequired, async (req, res) => {
     res.json({ success: true, message: 'Anime eliminado correctamente' });
   } catch (err) {
     res.status(500).json({ error: 'Error al eliminar anime' });
+  }
+});
+
+// Papelera de animes eliminados
+app.get('/api/admin/trash', authRequired, async (_req, res) => {
+  try {
+    res.json({ trash: db.getTrash() });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener la papelera' });
+  }
+});
+
+app.delete('/api/admin/trash', authRequired, async (_req, res) => {
+  try {
+    const count = db.emptyTrash();
+    res.json({ success: true, count, message: 'Papelera vaciada correctamente' });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al vaciar la papelera' });
   }
 });
 

@@ -38,7 +38,7 @@ function GalleryCard({ anime, studios, onClick, index, isNewEpisodesMode, episod
         id={`anime-card-${anime.id}`}
         onClick={onClick}
         title={anime.name}
-        className="group relative cursor-pointer aspect-[2/3] w-full bg-[#0d0818] rounded-2xl overflow-hidden border border-[#23153c] hover:border-purple-500/70 hover:shadow-lg hover:shadow-purple-950/40 shadow-md touch-manipulation select-none active:scale-[0.96] hover:-translate-y-0.5 transition-all duration-200 block"
+        className={`group relative cursor-pointer aspect-[2/3] w-full bg-[#0d0818] ${isNewEpisodesMode ? 'rounded-xl' : 'rounded-2xl'} overflow-hidden border border-[#23153c] hover:border-purple-500/70 hover:shadow-lg hover:shadow-purple-950/40 shadow-md touch-manipulation select-none active:scale-[0.96] hover:-translate-y-0.5 transition-all duration-200 block`}
       >
         {episodeCoverImage && !epCoverError ? (
           <img

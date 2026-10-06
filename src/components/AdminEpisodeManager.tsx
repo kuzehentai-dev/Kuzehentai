@@ -25,47 +25,9 @@ interface AdminEpisodeManagerProps {
   showNotification: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-// Compress episode cover images to lightweight WebP/JPEG
-const compressEpisodeCover = (base64Str: string, maxWidth = 500, maxHeight = 500): Promise<string> => {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-
-        const ratio = Math.min(maxWidth / width, maxHeight / height);
-        if (ratio < 1) {
-          width = Math.round(width * ratio);
-          height = Math.round(height * ratio);
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(base64Str);
-          return;
-        }
-
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'medium';
-        ctx.drawImage(img, 0, 0, width, height);
-
-        let output = canvas.toDataURL('image/webp', 0.85);
-        if (!output || output.length > base64Str.length || !output.startsWith('data:image/webp')) {
-          output = canvas.toDataURL('image/jpeg', 0.85);
-        }
-        resolve(output || base64Str);
-      } catch (err) {
-        console.warn('Episode cover compression fallback:', err);
-        resolve(base64Str);
-      }
-    };
-    img.onerror = () => resolve(base64Str);
-    img.src = base64Str;
-  });
+// Raw original episode cover image without compression
+const compressEpisodeCover = (base64Str: string): Promise<string> => {
+  return Promise.resolve(base64Str);
 };
 
 export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
@@ -143,16 +105,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
         ? anime.episodes
         : (anime.telegramUrl ? [{ number: 1, mp4Url: anime.telegramUrl, isNew: false }] : []);
 
-      const explicitNewEps = eps.filter(ep => Boolean(ep.isNew));
-      let targetEps = explicitNewEps;
-
-      const isEmision = Boolean(anime.status && anime.status.toLowerCase().includes('emisi'));
-      if (targetEps.length === 0 && isEmision) {
-        const hasAnyExplicitFlag = eps.some(ep => ep.isNew !== undefined);
-        if (!hasAnyExplicitFlag) {
-          targetEps = eps;
-        }
-      }
+      const targetEps = eps.filter(ep => Boolean(ep.isNew));
 
       if (targetEps.length === 0) return;
 
@@ -226,7 +179,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
     const targetEp = eps.find(e => Number(e.number) === epNumber);
 
     const defaultLink = targetEp?.mp4Url || targetEp?.telegramUrl || targetEp?.url || (epNumber === 1 ? anime.telegramUrl || '' : '');
-    const isNew = targetEp?.isNew !== undefined ? Boolean(targetEp.isNew) : Boolean(anime.status && anime.status.toLowerCase().includes('emisi'));
+    const isNew = Boolean(targetEp?.isNew);
 
     setEditingEpisode({
       number: epNumber,
@@ -268,8 +221,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
       reader.onload = async (event) => {
         const rawBase64 = event.target?.result as string;
         if (rawBase64) {
-          const compressed = await compressEpisodeCover(rawBase64, 480, 480);
-          setEditingEpisode(prev => prev ? { ...prev, coverImage: compressed } : null);
+          setEditingEpisode(prev => prev ? { ...prev, coverImage: rawBase64 } : null);
           showNotification(`Portada del Episodio #${editingEpisode.number} actualizada.`, 'success');
         }
       };
@@ -340,7 +292,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           episodes: existing,
-          status: selectedAnime.status || 'Emisión'
+          status: (selectedAnime.status === 'Finalizado' ? 'Finalizado' : 'Próximamente')
         })
       });
 

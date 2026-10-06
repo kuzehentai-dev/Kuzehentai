@@ -33,88 +33,9 @@ interface AdminPanelProps {
   currentUser?: User | null;
 }
 
-// Client-side canvas image compressor: activates if > 200 KB and strictly reduces down to <= 200 KB
-const compressImage = (base64Str: string, maxWidth = 540, maxHeight = 810): Promise<string> => {
-  return new Promise((resolve) => {
-    if (!base64Str || typeof base64Str !== 'string') return resolve(base64Str);
-
-    const commaIdx = base64Str.indexOf(',');
-    const base64Data = commaIdx >= 0 ? base64Str.slice(commaIdx + 1) : base64Str;
-    const estimatedBytes = Math.floor(base64Data.length * 0.75);
-
-    const MAX_BYTES = 200 * 1024; // 200 KB threshold (204,800 bytes)
-
-    // Si la imagen pesa <= 200 KB (cualquier formato: PNG, JPG, WebP), se deja exactamente como está
-    if (estimatedBytes > 0 && estimatedBytes <= MAX_BYTES) {
-      return resolve(base64Str);
-    }
-
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        let curWidth = img.width;
-        let curHeight = img.height;
-
-        // Scale initial bounding box
-        const initialRatio = Math.min(maxWidth / curWidth, maxHeight / curHeight, 1);
-        curWidth = Math.round(curWidth * initialRatio);
-        curHeight = Math.round(curHeight * initialRatio);
-
-        canvas.width = curWidth;
-        canvas.height = curHeight;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return resolve(base64Str);
-
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, 0, 0, curWidth, curHeight);
-
-        // Quality and size loop: guarantees strictly <= 200 KB!
-        let quality = 0.88;
-        let output = canvas.toDataURL('image/webp', quality);
-        if (!output || !output.startsWith('data:image/webp')) {
-          output = canvas.toDataURL('image/jpeg', quality);
-        }
-
-        let outBytes = Math.floor((output.split(',')[1]?.length || output.length) * 0.75);
-
-        // Iteratively downscale quality until <= 200 KB
-        while (outBytes > MAX_BYTES && quality > 0.35) {
-          quality -= 0.08;
-          output = canvas.toDataURL('image/webp', quality);
-          if (!output || !output.startsWith('data:image/webp')) {
-            output = canvas.toDataURL('image/jpeg', quality);
-          }
-          outBytes = Math.floor((output.split(',')[1]?.length || output.length) * 0.75);
-        }
-
-        // If still > 200 KB, resize canvas dimensions
-        while (outBytes > MAX_BYTES && curWidth > 320) {
-          curWidth = Math.round(curWidth * 0.88);
-          curHeight = Math.round(curHeight * 0.88);
-          canvas.width = curWidth;
-          canvas.height = curHeight;
-          ctx.drawImage(img, 0, 0, curWidth, curHeight);
-          output = canvas.toDataURL('image/webp', Math.max(0.40, quality));
-          if (!output || !output.startsWith('data:image/webp')) {
-            output = canvas.toDataURL('image/jpeg', Math.max(0.40, quality));
-          }
-          outBytes = Math.floor((output.split(',')[1]?.length || output.length) * 0.75);
-        }
-
-        resolve(output || base64Str);
-      } catch (err) {
-        console.warn('Error in canvas compressor, falling back to raw:', err);
-        resolve(base64Str);
-      }
-    };
-    img.onerror = () => {
-      console.warn('Failed to load image in compression helper, using original.');
-      resolve(base64Str);
-    };
-    img.src = base64Str;
-  });
+// No image optimization/compression - keeps images 100% original
+const compressImage = (base64Str: string): Promise<string> => {
+  return Promise.resolve(base64Str);
 };
 
 // Smart URL parser to extract Anime title candidate & episode number from links (e.g. Internet Archive)
@@ -305,6 +226,59 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
   const [animeGenreIds, setAnimeGenreIds] = useState<string[]>([]);
   const [animeGenresInput, setAnimeGenresInput] = useState('');
   const [animeStatus, setAnimeStatus] = useState('Finalizado');
+
+  // Papelera de animes eliminados (guarda exclusivamente los nombres de los animes eliminados)
+  const [showTrashModal, setShowTrashModal] = useState(false);
+  const [trashNames, setTrashNames] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('deleted_animes_trash');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isClearingTrash, setIsClearingTrash] = useState(false);
+
+  const fetchTrash = async () => {
+    try {
+      const res = await fetch('/api/admin/trash', { headers: apiHeaders });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.trash)) {
+          setTrashNames(data.trash);
+          localStorage.setItem('deleted_animes_trash', JSON.stringify(data.trash));
+        }
+      }
+    } catch (e) {}
+  };
+
+  const recordDeletedAnime = (name: string) => {
+    if (!name) return;
+    setTrashNames(prev => {
+      const next = prev.includes(name) ? prev : [name, ...prev];
+      localStorage.setItem('deleted_animes_trash', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const handleEmptyTrash = async () => {
+    setIsClearingTrash(true);
+    try {
+      await fetch('/api/admin/trash', { method: 'DELETE', headers: apiHeaders }).catch(() => null);
+      setTrashNames([]);
+      localStorage.removeItem('deleted_animes_trash');
+      showNotification('Papelera vaciada correctamente', 'success');
+    } catch (err: any) {
+      showNotification('Error al vaciar papelera', 'error');
+    } finally {
+      setIsClearingTrash(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTrash();
+  }, []);
+
   const [lastUsedStudio, setLastUsedStudio] = useState<{ id: string; search: string }>(() => {
     try {
       const saved = localStorage.getItem('kh_admin_last_used_studio');
@@ -343,6 +317,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
     title?: string;
   }[]>([]);
   const episodeInputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
   const [animeHidden, setAnimeHidden] = useState(false);
   const [animeFormError, setAnimeFormError] = useState('');
   const [imageUploadLoading, setImageUploadLoading] = useState(false);
@@ -1038,20 +1013,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       reader.onload = async (ev) => {
         const raw = ev.target?.result as string;
         if (raw) {
-          const comma = raw.indexOf(',');
-          const dataStr = comma >= 0 ? raw.slice(comma + 1) : raw;
-          const bytes = file.size || Math.floor(dataStr.length * 0.75);
-          if (bytes > 200 * 1024) {
-            try {
-              const compressed = await compressImage(raw, 500, 500);
-              setStudioImage(compressed);
-            } catch {
-              setStudioImage(raw);
-            }
-          } else {
-            // Pesa <= 200 KB: se conserva 100% original
-            setStudioImage(raw);
-          }
+          setStudioImage(raw);
         }
       };
       reader.readAsDataURL(file);
@@ -1084,9 +1046,10 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
     });
   }, []);
 
-  // Check Firebase connection immediately upon entering admin panel
+  // Check Firebase connection immediately upon entering admin panel and load trash
   useEffect(() => {
     checkFirebaseConnection();
+    fetchTrash();
   }, []);
 
   useEffect(() => {
@@ -1452,7 +1415,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       .join(', ');
     setAnimeGenresInput(initialGenreNames);
 
-    setAnimeStatus(anime.status);
+    setAnimeStatus(anime.status === 'Emisión' ? 'Próximamente' : (anime.status || 'Finalizado'));
     setAnimeYear(anime.year || '');
     setAnimeDescription(anime.description || '');
     setAnimeTelegramUrl(anime.telegramUrl || '');
@@ -1675,27 +1638,9 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       reader.onload = async (event) => {
         const rawBase64 = event.target?.result as string;
         if (rawBase64) {
-          const commaIdx = rawBase64.indexOf(',');
-          const base64Data = commaIdx >= 0 ? rawBase64.slice(commaIdx + 1) : rawBase64;
-          const estimatedBytes = file.size || Math.floor(base64Data.length * 0.75);
-          const wasOver200Kb = estimatedBytes > 200 * 1024;
-
-          if (!wasOver200Kb) {
-            // Pesa <= 200 KB: se conserva 100% original sin optimizar
-            setAnimeImage(rawBase64);
-            setIsImageOptimized(false);
-          } else {
-            try {
-              // Pesa > 200 KB: se optimiza a un máximo de 200 KB
-              const compressed = await compressImage(rawBase64);
-              setAnimeImage(compressed);
-              setIsImageOptimized(true);
-            } catch (compressErr) {
-              console.warn('Compression failed, falling back to raw base64:', compressErr);
-              setAnimeImage(rawBase64); // Safe fallback
-              setIsImageOptimized(false);
-            }
-          }
+          // Sin optimización: se conserva la imagen 100% original
+          setAnimeImage(rawBase64);
+          setIsImageOptimized(false);
         }
         setImageUploadLoading(false);
       };
@@ -1875,20 +1820,8 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       }];
     }
 
-    let finalCover = animeImage;
-    if (finalCover && finalCover.startsWith('data:image/')) {
-      const comma = finalCover.indexOf(',');
-      const dataStr = comma >= 0 ? finalCover.slice(comma + 1) : finalCover;
-      const estBytes = Math.floor(dataStr.length * 0.75);
-      // Solo optimiza si la portada supera 200 KB (> 200 KB). Si pesa <= 200 KB se conserva intacta
-      if (estBytes > 200 * 1024) {
-        try {
-          finalCover = await compressImage(finalCover);
-        } catch (e) {
-          console.warn('Cover re-compression fallback:', e);
-        }
-      }
-    }
+    const finalCover = animeImage;
+    const targetStatus = animeStatus === 'Emisión' ? 'Próximamente' : animeStatus;
 
     const payload = {
       name: trimmedName,
@@ -1897,7 +1830,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       studioId: primaryStudioId,
       studioIds: targetStudioIds,
       genreIds: targetGenreIds,
-      status: animeStatus,
+      status: targetStatus,
       year: normalizeAnimeYear(animeYear),
       description: animeDescription,
       telegramUrl: primaryTelegramUrl,
@@ -1991,22 +1924,26 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
   };
 
   const executeDeleteAnime = async (id: string) => {
+    const targetAnime = animes.find(a => a.id === id);
+    if (targetAnime?.name) {
+      recordDeletedAnime(targetAnime.name);
+    }
     try {
       const res = await fetch(`/api/animes/${id}`, { method: 'DELETE', headers: apiHeaders }).catch(() => null);
       if (res && res.ok) {
         onRefresh();
-        showNotification('Anime eliminado con éxito', 'success');
+        showNotification('Anime eliminado y movido a la papelera', 'success');
         return;
       }
       // Direct Firestore fallback for Vercel/Static hosting
       await deleteDoc(doc(db, 'animes', id));
       onRefresh();
-      showNotification('Anime eliminado de Firebase Firestore', 'success');
+      showNotification('Anime eliminado y movido a la papelera', 'success');
     } catch (err: any) {
       try {
         await deleteDoc(doc(db, 'animes', id));
         onRefresh();
-        showNotification('Anime eliminado de Firebase Firestore', 'success');
+        showNotification('Anime eliminado y movido a la papelera', 'success');
       } catch (fbErr: any) {
         showNotification('Error al eliminar: ' + (fbErr?.message || 'Error de red'), 'error');
       }
@@ -2706,34 +2643,42 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
         {/* --- ANIMES TAB --- */}
         {activeTab === 'animes' && (
           <div className="space-y-5">
-            <div className="flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap">
-              <div className="flex items-center gap-2">
-                <Film className="h-4 w-4 text-brand-red" />
-                <h2 className="font-display font-bold text-sm uppercase tracking-wider text-white">
-                  Catálogo de Animes
-                </h2>
-                <span className="font-mono text-xs text-neutral-500">
-                  ({animes.length} registrados)
-                </span>
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Film className="h-4 w-4 text-brand-red" />
+                  <h2 className="font-display font-bold text-sm uppercase tracking-wider text-white">
+                    Catálogo de Animes
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      fetchTrash();
+                      setShowTrashModal(true);
+                    }}
+                    className="p-1.5 rounded-lg text-neutral-400 hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/30 transition-all cursor-pointer relative"
+                    title="Papelera de animes eliminados"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {trashNames.length > 0 && (
+                      <span className="absolute -top-1 -right-1 px-1 min-w-[15px] h-[15px] rounded-full bg-red-600 text-[8.5px] font-mono font-bold text-white flex items-center justify-center shadow-xs leading-none">
+                        {trashNames.length}
+                      </span>
+                    )}
+                  </button>
+                </div>
               </div>
 
               {!isAnimeFormOpen && (
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="w-full">
                   <button
-                    onClick={handleOpenQuickAddEpModal}
-                    className="px-4 py-2 bg-brand-red hover:bg-brand-red-hover text-white rounded-full font-display font-medium text-xs tracking-wider uppercase flex items-center gap-2 transition-all duration-200 shrink-0 cursor-pointer shadow-md shadow-brand-red/20 active:scale-95"
-                    title="Detecta automáticamente el anime y número de episodio al pegar un enlace"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    <span>Agregar Episodio</span>
-                  </button>
-
-                  <button
+                    type="button"
                     onClick={openNewAnimeForm}
-                    className="px-4 py-2 bg-brand-red hover:bg-brand-red-hover text-white rounded-full font-display font-medium text-xs tracking-wider uppercase flex items-center gap-2 transition-all duration-200 shrink-0 cursor-pointer shadow-md shadow-brand-red/20 active:scale-95"
+                    className="w-full py-2.5 sm:py-3 bg-brand-red hover:bg-brand-red-hover text-white rounded-xl font-display font-semibold text-xs sm:text-sm tracking-wider uppercase flex items-center justify-center gap-2 transition-all duration-200 cursor-pointer shadow-md shadow-brand-red/20 active:scale-[0.99]"
+                    title="Agregar un nuevo Hentai al catálogo"
                   >
-                    <Plus className="h-3.5 w-3.5" />
-                    <span>Agregar Portada</span>
+                    <Plus className="h-4 w-4" />
+                    <span>Agregar Hentai</span>
                   </button>
                 </div>
               )}
@@ -2780,13 +2725,8 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                         <>
                           <img src={animeImage} alt="Vista previa" className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
                           {animeImage.startsWith('data:image/') && (
-                            <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/75 backdrop-blur-xs border border-emerald-500/40 text-[8.5px] font-mono text-emerald-300 z-10 font-bold tracking-tight flex items-center gap-1">
+                            <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/75 backdrop-blur-xs border border-purple-500/40 text-[8.5px] font-mono text-purple-300 z-10 font-bold tracking-tight flex items-center gap-1">
                               <span>~{Math.round(animeImage.length * 0.75 / 1024)} KB</span>
-                              {isImageOptimized ? (
-                                <span className="text-amber-300 font-bold">optimizada (&gt; 200 KB)</span>
-                              ) : (
-                                <span className="text-emerald-400 font-medium">original (&le; 200 KB)</span>
-                              )}
                               <span className="opacity-75">· {animeImage.includes('webp') ? 'WebP' : animeImage.includes('png') ? 'PNG' : 'JPG'}</span>
                             </div>
                           )}
@@ -2833,7 +2773,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                         className="w-full py-2 bg-dark-border hover:bg-neutral-800 disabled:opacity-50 text-neutral-300 hover:text-white rounded font-mono text-[10px] uppercase tracking-wider transition-colors duration-300 flex items-center justify-center gap-1.5 cursor-pointer"
                       >
                         <Upload className="h-3.5 w-3.5" />
-                        {imageUploadLoading ? 'Comprimiendo...' : 'Subir archivo y optimizar'}
+                        {imageUploadLoading ? 'Cargando imagen...' : 'Subir archivo de imagen'}
                       </button>
                     </div>
                   </div>
@@ -2994,7 +2934,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                           Estado *
                         </label>
                         <select
-                          value={animeStatus}
+                          value={animeStatus === 'Emisión' ? 'Próximamente' : animeStatus}
                           onChange={(e) => {
                             const val = e.target.value;
                             setAnimeStatus(val);
@@ -3005,9 +2945,8 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                           }}
                           className="w-full bg-[#050505] border border-dark-border focus:border-brand-red/50 rounded p-2.5 text-sm text-white outline-none transition-colors duration-300"
                         >
-                          <option value="Emisión">En Emisión</option>
+                          <option value="Próximamente">En Emisión</option>
                           <option value="Finalizado">Finalizado</option>
-                          <option value="Próximamente">Próximamente</option>
                         </select>
                       </div>
                     </div>
@@ -3256,7 +3195,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                           className="px-6 py-2 bg-brand-red hover:bg-brand-red-hover disabled:opacity-50 disabled:cursor-not-allowed text-white rounded font-display font-medium text-xs tracking-widest uppercase transition-all duration-300 flex items-center gap-1.5"
                         >
                           <Save className="h-4 w-4" />
-                          {imageUploadLoading ? 'Optimizando Imagen...' : 'Guardar Anime'}
+                          {imageUploadLoading ? 'Guardando...' : (editingAnime ? 'Actualizar Anime' : 'Guardar Anime')}
                         </button>
                         <button
                           type="button"
@@ -3355,7 +3294,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                           : (anime.studioId ? [anime.studioId] : []);
                         const sNames = sIds.map(id => studioMapForAdmin.get(id)).filter(Boolean);
                         const sName = sNames.length > 0 ? sNames.join(', ') : 'Sin estudio';
-                        const isEmision = anime.status?.toLowerCase().includes('emisión') || anime.status?.toLowerCase().includes('emision');
+                        const isEmision = anime.status === 'Próximamente' || anime.status?.toLowerCase().includes('emisión') || anime.status?.toLowerCase().includes('emision');
 
                         // Check if there was an issue saving to Firebase
                         const hasFirebaseError = 
@@ -3997,39 +3936,6 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                     Reiniciar Comentarios
                   </button>
                 </div>
-
-                {/* 4. Optimizar portadas a máximo 200 KB */}
-                <div className="p-4 bg-black/40 border border-dark-border/80 hover:border-emerald-500/40 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-colors duration-200">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <ImageIcon className="h-4 w-4 text-emerald-400" />
-                      <h4 className="font-display font-bold text-xs text-white uppercase tracking-wider">
-                        Optimizar portadas a máximo 200 KB
-                      </h4>
-                    </div>
-                    <p className="font-sans text-neutral-400 text-xs leading-relaxed">
-                      Analiza todas las portadas de los animes en la base de datos y reduce automáticamente cualquier portada que supere los 200 KB para acelerar la carga y ahorrar espacio.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleOptimizeCovers}
-                    disabled={isOptimizingCovers}
-                    className="px-4 py-2.5 bg-emerald-500/10 border border-emerald-500/40 hover:bg-emerald-500 hover:text-black text-emerald-400 disabled:opacity-50 rounded font-display font-semibold text-xs tracking-wider uppercase flex items-center justify-center gap-2 transition-all duration-300 cursor-pointer shrink-0 w-full sm:w-auto"
-                  >
-                    {isOptimizingCovers ? (
-                      <>
-                        <div className="w-3.5 h-3.5 border-2 border-emerald-400/30 border-t-emerald-400 rounded-full animate-spin" />
-                        <span>Optimizando...</span>
-                      </>
-                    ) : (
-                      <>
-                        <ImageIcon className="h-3.5 w-3.5" />
-                        <span>Optimizar Portadas</span>
-                      </>
-                    )}
-                  </button>
-                </div>
               </div>
             </div>
 
@@ -4317,7 +4223,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                         {quotaStats.data.storage.totalCoversDiskMB} MB
                       </div>
                       <p className="font-mono text-[10px] text-neutral-500">
-                        {quotaStats.data.storage.totalCoversCount} portadas optimizadas en WebP
+                        {quotaStats.data.storage.totalCoversCount} portadas almacenadas
                       </p>
                     </div>
                   </div>
@@ -4892,6 +4798,82 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                 >
                   <Save className="h-4 w-4" />
                   {isSavingQuickEp ? 'Guardando...' : `Guardar ${quickEpItems.filter(it => it.url.trim() !== '').length || 1} Episodio(s)`}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Floating Trash Bin Modal - Always centered in the middle of screen */}
+        {showTrashModal && (
+          <div className="fixed inset-0 z-[99999] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+            <div 
+              className="absolute inset-0" 
+              onClick={() => setShowTrashModal(false)} 
+            />
+            <div className="relative z-10 bg-[#0e0818] border border-purple-900/60 rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-[0_25px_60px_rgba(0,0,0,0.9)] space-y-4 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex items-center justify-between border-b border-purple-950/80 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-red-950/50 border border-red-500/30 text-red-400">
+                    <Trash2 className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-sm sm:text-base text-white tracking-wide">
+                      Papelera de Eliminados
+                    </h3>
+                    <p className="font-mono text-[10px] text-neutral-400">
+                      {trashNames.length} {trashNames.length === 1 ? 'anime registrado' : 'animes registrados'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTrashModal(false)}
+                  className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
+                  title="Cerrar"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* List of names only */}
+              <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-purple-900/60 scrollbar-track-transparent">
+                {trashNames.length > 0 ? (
+                  trashNames.map((name, idx) => (
+                    <div
+                      key={idx}
+                      className="px-3 py-2 rounded-lg bg-[#140b24] border border-[#23153c] text-xs font-medium text-neutral-200 flex items-center gap-2 truncate"
+                    >
+                      <span className="font-mono text-[9px] text-purple-400 font-bold shrink-0">#{idx + 1}</span>
+                      <span className="truncate">{name}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="py-8 text-center space-y-2">
+                    <Trash2 className="h-8 w-8 text-neutral-700 mx-auto" />
+                    <p className="font-mono text-xs text-neutral-500">La papelera está vacía.</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="pt-2 border-t border-purple-950/80 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  disabled={trashNames.length === 0 || isClearingTrash}
+                  onClick={handleEmptyTrash}
+                  className="px-4 py-2 bg-red-600/90 hover:bg-red-600 disabled:opacity-40 disabled:hover:bg-red-600/90 text-white rounded-xl font-mono text-xs font-semibold uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shadow-md shadow-red-950/50 active:scale-95"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>{isClearingTrash ? 'Vaciando...' : 'Vaciar papelera'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowTrashModal(false)}
+                  className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded-xl font-mono text-xs transition-colors cursor-pointer"
+                >
+                  Cerrar
                 </button>
               </div>
             </div>

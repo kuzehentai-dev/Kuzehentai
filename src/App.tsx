@@ -77,7 +77,13 @@ import {
 
 export type PageType = 'home' | 'detail' | 'admin' | 'my-list' | 'watched' | 'studio';
 
-const isEmisionStatus = (status?: string) => Boolean(status && (status.toLowerCase().includes('emisi') || status.toLowerCase().includes('emisión')));
+const isEmisionStatus = (status?: string) => Boolean(
+  status && (
+    status === 'Próximamente' ||
+    status.toLowerCase().includes('emisi') ||
+    status.toLowerCase().includes('emisión')
+  )
+);
 
 export default function App() {
   // Page routing state
@@ -973,7 +979,10 @@ export default function App() {
         const matchesGenre = selectedGenreIds.length === 0 || 
           selectedGenreIds.every(gid => anime.genreIds?.includes(gid));
         const matchesYear = selectedYear === '' || (normalizeAnimeYear(anime.year) === selectedYear.trim());
-        const matchesStatus = selectedStatus === '' || anime.status === selectedStatus;
+        const matchesStatus = selectedStatus === '' || 
+          ((selectedStatus === 'Próximamente' || selectedStatus === 'Emisión')
+            ? isEmisionStatus(anime.status)
+            : anime.status === selectedStatus);
 
         const matchesRating = selectedRating === '' || (() => {
           const stats = getAnimeRatingStats(anime.id);
@@ -1129,18 +1138,8 @@ export default function App() {
         ? anime.episodes
         : (anime.telegramUrl ? [{ number: 1, mp4Url: anime.telegramUrl, isNew: false }] : []);
 
-      // Filter episodes explicitly chosen with the toggle switch
-      const explicitNewEps = eps.filter(ep => Boolean(ep.isNew));
-
-      let targetEps = explicitNewEps;
-
-      // If none explicitly marked, but anime is in Emisión and has legacy episodes without explicit flags, fallback to eps
-      if (targetEps.length === 0 && isEmisionStatus(anime.status)) {
-        const hasAnyExplicitFlag = eps.some(ep => ep.isNew !== undefined);
-        if (!hasAnyExplicitFlag) {
-          targetEps = eps;
-        }
-      }
+      // Filter episodes explicitly chosen with the toggle switch (isNew === true)
+      const targetEps = eps.filter(ep => Boolean(ep.isNew));
 
       if (targetEps.length === 0) return;
 

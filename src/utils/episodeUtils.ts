@@ -40,9 +40,8 @@ export function normalizeEpisodesList(eps: any): Episode[] {
             url: link,
             videoUrl: link,
             link: link,
+            isNew: Boolean(ep.isNew),
             ...(ep.title ? { title: String(ep.title) } : {}),
-            ...(ep.name ? { name: String(ep.name) } : {}),
-            ...(ep.isNew ? { isNew: true } : {}),
             ...(ep.coverImage ? { coverImage: String(ep.coverImage) } : {}),
             ...(ep.thumbnail ? { thumbnail: String(ep.thumbnail) } : {}),
             ...(ep.addedToRecentAt ? { addedToRecentAt: String(ep.addedToRecentAt) } : {})
@@ -82,8 +81,8 @@ export function normalizeEpisodesList(eps: any): Episode[] {
           url: link,
           videoUrl: link,
           link: link,
+          isNew: Boolean(isNew),
           ...(title ? { title } : {}),
-          ...(isNew ? { isNew: true } : {}),
           ...(coverImage ? { coverImage } : {}),
           ...(thumbnail ? { thumbnail } : {}),
           ...(addedToRecentAt ? { addedToRecentAt } : {})

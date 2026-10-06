@@ -50,9 +50,8 @@ const RATING_OPTIONS = [
 ];
 
 const STATUS_OPTIONS = [
-  { id: 'Emisión', label: 'En Emisión' },
+  { id: 'Próximamente', label: 'En Emisión' },
   { id: 'Finalizado', label: 'Finalizado' },
-  { id: 'Próximamente', label: 'Próximamente' },
 ];
 
 function FilterModal({
@@ -289,7 +288,7 @@ function FilterModal({
                     Todos
                   </button>
                   {STATUS_OPTIONS.map(opt => {
-                    const isSelected = selectedStatus === opt.id;
+                    const isSelected = selectedStatus === opt.id || (opt.id === 'Próximamente' && selectedStatus === 'Emisión');
                     return (
                       <button
                         key={opt.id}
@@ -301,7 +300,7 @@ function FilterModal({
                             : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
                         }`}
                       >
-                        {opt.id === 'Emisión' && !isSelected && (
+                        {opt.id === 'Próximamente' && !isSelected && (
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.85)] shrink-0 animate-pulse" />
                         )}
                         <span>{opt.label}</span>
