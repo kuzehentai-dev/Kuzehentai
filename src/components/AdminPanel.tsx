@@ -44,8 +44,8 @@ const compressImage = (base64Str: string, maxWidth = 540, maxHeight = 810): Prom
 
     const MAX_BYTES = 200 * 1024; // 200 KB threshold (204,800 bytes)
 
-    // If image is already <= 200 KB and already WebP, retain pristine quality
-    if (estimatedBytes > 0 && estimatedBytes <= MAX_BYTES && base64Str.startsWith('data:image/webp')) {
+    // Si la imagen pesa <= 200 KB (cualquier formato: PNG, JPG, WebP), se deja exactamente como está
+    if (estimatedBytes > 0 && estimatedBytes <= MAX_BYTES) {
       return resolve(base64Str);
     }
 
@@ -576,7 +576,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
           coverData: '',
           studioId: defaultStudioId,
           genreIds: [],
-          status: 'En emisión',
+          status: 'Emisión',
           year: new Date().getFullYear().toString(),
           description: '',
           telegramUrl: firstUrl,
@@ -1038,10 +1038,18 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       reader.onload = async (ev) => {
         const raw = ev.target?.result as string;
         if (raw) {
-          try {
-            const compressed = await compressImage(raw, 500, 500);
-            setStudioImage(compressed);
-          } catch {
+          const comma = raw.indexOf(',');
+          const dataStr = comma >= 0 ? raw.slice(comma + 1) : raw;
+          const bytes = file.size || Math.floor(dataStr.length * 0.75);
+          if (bytes > 200 * 1024) {
+            try {
+              const compressed = await compressImage(raw, 500, 500);
+              setStudioImage(compressed);
+            } catch {
+              setStudioImage(raw);
+            }
+          } else {
+            // Pesa <= 200 KB: se conserva 100% original
             setStudioImage(raw);
           }
         }
@@ -1672,15 +1680,21 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
           const estimatedBytes = file.size || Math.floor(base64Data.length * 0.75);
           const wasOver200Kb = estimatedBytes > 200 * 1024;
 
-          try {
-            // Optimize/Compress image using HTML5 canvas before saving!
-            const compressed = await compressImage(rawBase64);
-            setAnimeImage(compressed);
-            setIsImageOptimized(wasOver200Kb);
-          } catch (compressErr) {
-            console.warn('Compression failed, falling back to raw base64:', compressErr);
-            setAnimeImage(rawBase64); // Safe fallback
+          if (!wasOver200Kb) {
+            // Pesa <= 200 KB: se conserva 100% original sin optimizar
+            setAnimeImage(rawBase64);
             setIsImageOptimized(false);
+          } else {
+            try {
+              // Pesa > 200 KB: se optimiza a un máximo de 200 KB
+              const compressed = await compressImage(rawBase64);
+              setAnimeImage(compressed);
+              setIsImageOptimized(true);
+            } catch (compressErr) {
+              console.warn('Compression failed, falling back to raw base64:', compressErr);
+              setAnimeImage(rawBase64); // Safe fallback
+              setIsImageOptimized(false);
+            }
           }
         }
         setImageUploadLoading(false);
@@ -1866,7 +1880,8 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       const comma = finalCover.indexOf(',');
       const dataStr = comma >= 0 ? finalCover.slice(comma + 1) : finalCover;
       const estBytes = Math.floor(dataStr.length * 0.75);
-      if (estBytes > 200 * 1024 || !finalCover.startsWith('data:image/webp')) {
+      // Solo optimiza si la portada supera 200 KB (> 200 KB). Si pesa <= 200 KB se conserva intacta
+      if (estBytes > 200 * 1024) {
         try {
           finalCover = await compressImage(finalCover);
         } catch (e) {
@@ -2767,10 +2782,12 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                           {animeImage.startsWith('data:image/') && (
                             <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/75 backdrop-blur-xs border border-emerald-500/40 text-[8.5px] font-mono text-emerald-300 z-10 font-bold tracking-tight flex items-center gap-1">
                               <span>~{Math.round(animeImage.length * 0.75 / 1024)} KB</span>
-                              {isImageOptimized && (
-                                <span className="text-amber-300 font-bold">optimizada</span>
+                              {isImageOptimized ? (
+                                <span className="text-amber-300 font-bold">optimizada (&gt; 200 KB)</span>
+                              ) : (
+                                <span className="text-emerald-400 font-medium">original (&le; 200 KB)</span>
                               )}
-                              <span className="opacity-75">· {animeImage.includes('webp') ? 'WebP' : 'JPG'}</span>
+                              <span className="opacity-75">· {animeImage.includes('webp') ? 'WebP' : animeImage.includes('png') ? 'PNG' : 'JPG'}</span>
                             </div>
                           )}
                           <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-2">

@@ -411,9 +411,10 @@ async function compressImageToWebpBuffer(imageStr: string): Promise<{ buffer: Bu
 
   const MAX_TARGET_BYTES = 200 * 1024; // 200 KB threshold
 
-  // If already <= 200 KB and already WebP, preserve it untouched with 100% original quality
-  if (inputBuffer.length <= MAX_TARGET_BYTES && detectedMime.includes('webp')) {
-    return { buffer: inputBuffer, mimeType: 'image/webp', extension: 'webp' };
+  // If already <= 200 KB, preserve it untouched with 100% original quality
+  if (inputBuffer.length <= MAX_TARGET_BYTES) {
+    const ext = detectedMime.includes('webp') ? 'webp' : detectedMime.includes('png') ? 'png' : 'jpg';
+    return { buffer: inputBuffer, mimeType: detectedMime, extension: ext };
   }
 
   const sharp = await getSharp();
@@ -422,14 +423,6 @@ async function compressImageToWebpBuffer(imageStr: string): Promise<{ buffer: Bu
   }
 
   try {
-    // If the image is <= 200 KB but not WebP, convert to WebP with very high quality (92)
-    if (inputBuffer.length <= MAX_TARGET_BYTES) {
-      const webpBuf = await sharp(inputBuffer)
-        .webp({ quality: 92, effort: 4 })
-        .toBuffer();
-      return { buffer: webpBuf, mimeType: 'image/webp', extension: 'webp' };
-    }
-
     // If the image is > 200 KB, optimize it down to <= 200 KB while maximizing resolution and clarity
     let quality = 85;
     let targetW = 480;
@@ -887,21 +880,40 @@ class DBService {
     }
 
     if (candidate) {
-      // Check if candidate is already WebP Base64 AND <= 200 KB
-      if (candidate.startsWith('data:image/webp;base64,')) {
+      const isBase64 = candidate.startsWith('data:image/');
+      let estBytes = 0;
+      let detectedExt = 'webp';
+      let detectedMime = 'image/webp';
+      if (isBase64) {
         const parts = candidate.split(';base64,');
-        const estBytes = parts.length === 2 ? Math.floor(parts[1].length * 0.75) : 0;
-        if (estBytes > 0 && estBytes <= MAX_TARGET_BYTES) {
-          if (!fs.existsSync(localWebpPath)) {
+        estBytes = parts.length === 2 ? Math.floor(parts[1].length * 0.75) : 0;
+        const mimeMatch = candidate.match(/^data:([^;]+);/);
+        if (mimeMatch) {
+          detectedMime = mimeMatch[1];
+          detectedExt = detectedMime.includes('webp') ? 'webp' : detectedMime.includes('png') ? 'png' : 'jpg';
+        }
+      }
+
+      // Si la imagen pesa <= 200 KB, no se optimiza: se guarda y se conserva 100% como está
+      if (estBytes > 0 && estBytes <= MAX_TARGET_BYTES) {
+        const parts = candidate.split(';base64,');
+        if (parts.length === 2) {
+          const targetDiskPath = path.join(COVERS_DIR, `${animeId}.${detectedExt}`);
+          if (!fs.existsSync(targetDiskPath)) {
+            try {
+              fs.writeFileSync(targetDiskPath, Buffer.from(parts[1], 'base64'));
+            } catch (e) {}
+          }
+          if (detectedExt === 'webp' && !fs.existsSync(localWebpPath)) {
             try {
               fs.writeFileSync(localWebpPath, Buffer.from(parts[1], 'base64'));
             } catch (e) {}
           }
-          return { imageUrl: publicUrlPath, coverData: candidate };
         }
+        return { imageUrl: publicUrlPath, coverData: candidate };
       }
 
-      // If > 200 KB OR not WebP, OPTIMIZATION ACTIVATES and reduces to <= 200 KB!
+      // Solo si excede 200 KB (> 200 KB), se optimiza a un máximo de 200 KB
       const optResult = await compressImageToWebpBuffer(candidate);
       if (optResult && optResult.buffer) {
         try {
@@ -982,7 +994,8 @@ class DBService {
       if (anime.coverData && anime.coverData.startsWith('data:image/')) {
         const parts = anime.coverData.split(';base64,');
         const estBytes = parts.length === 2 ? Math.floor(parts[1].length * 0.75) : 0;
-        if (estBytes > MAX_TARGET_BYTES || !anime.coverData.startsWith('data:image/webp;')) {
+        // Solo se optimiza si la portada excede los 200 KB (> 200 KB). Si pesa <= 200 KB se conserva intacta
+        if (estBytes > MAX_TARGET_BYTES) {
           needsOptimization = true;
           inputStr = anime.coverData;
           initialSize = estBytes;

@@ -293,43 +293,54 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
     };
   }, [isPlayerOpen, onBack]);
 
-  // Compute episodes list and active episode
+  // Compute episodes list and active episode with robust fallbacks
   const displayEpisodes = useMemo(() => {
     if (anime.episodes && anime.episodes.length > 0) {
-      return anime.episodes
+      const parsed = anime.episodes
         .map(ep => {
           const videoLink = String(ep.telegramUrl || ep.url || ep.videoUrl || ep.mp4Url || ep.link || '').trim();
           return {
             ...ep,
             number: Number(ep.number) || 1,
-            telegramUrl: videoLink,
-            url: videoLink,
-            videoUrl: videoLink,
-            mp4Url: videoLink,
-            link: videoLink
+            telegramUrl: videoLink || anime.telegramUrl || '',
+            url: videoLink || anime.telegramUrl || '',
+            videoUrl: videoLink || anime.telegramUrl || '',
+            mp4Url: videoLink || anime.telegramUrl || '',
+            link: videoLink || anime.telegramUrl || ''
           };
         })
-        .filter(ep => ep.telegramUrl !== '');
+        .filter(ep => Boolean(ep.telegramUrl));
+      if (parsed.length > 0) return parsed;
     }
     return anime.telegramUrl
-      ? [{ number: 1, telegramUrl: anime.telegramUrl, url: anime.telegramUrl, videoUrl: anime.telegramUrl }]
+      ? [{ number: 1, telegramUrl: anime.telegramUrl, url: anime.telegramUrl, videoUrl: anime.telegramUrl, mp4Url: anime.telegramUrl, link: anime.telegramUrl }]
       : [];
   }, [anime.episodes, anime.telegramUrl]);
 
   const currentEpisode = useMemo(() => {
-    return displayEpisodes.find(ep => ep.number === activeEpisodeNum) || displayEpisodes[0];
+    if (activeEpisodeNum !== null && activeEpisodeNum !== undefined) {
+      const match = displayEpisodes.find(ep => Number(ep.number) === Number(activeEpisodeNum));
+      if (match) return match;
+    }
+    return displayEpisodes[0];
   }, [displayEpisodes, activeEpisodeNum]);
 
   // Expanded modal state
   const [isPlayerExpanded, setIsPlayerExpanded] = useState<boolean>(false);
 
-  // Computed direct video MP4 URL for current episode
+  // Computed video URL for current episode
   const rawVideoUrl = useMemo(() => {
-    if (!currentEpisode) return anime.telegramUrl || '';
-    return currentEpisode.telegramUrl || currentEpisode.url || currentEpisode.videoUrl || currentEpisode.mp4Url || currentEpisode.link || anime.telegramUrl || '';
+    if (!currentEpisode) return (anime.telegramUrl || '').trim();
+    return (currentEpisode.telegramUrl || currentEpisode.url || currentEpisode.videoUrl || currentEpisode.mp4Url || currentEpisode.link || anime.telegramUrl || '').trim();
   }, [currentEpisode, anime.telegramUrl]);
 
-  const isArchiveUrl = useMemo(() => rawVideoUrl.includes('archive.org'), [rawVideoUrl]);
+  const isTelegramUrl = useMemo(() => {
+    return rawVideoUrl.toLowerCase().includes('t.me/');
+  }, [rawVideoUrl]);
+
+  const isArchiveUrl = useMemo(() => {
+    return rawVideoUrl.toLowerCase().includes('archive.org');
+  }, [rawVideoUrl]);
 
   const archiveEmbedUrl = useMemo(() => {
     if (!rawVideoUrl) return '';
@@ -360,13 +371,21 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
     return url;
   }, [rawVideoUrl]);
 
-  // Player mode: true = Internet Archive Embed, false = HTML5 Direct
-  const [useEmbedPlayer, setUseEmbedPlayer] = useState<boolean>(true);
+  // Player mode: false = HTML5 Direct (Fast, hardware-accelerated, zero-iframe), true = Internet Archive Embed fallback
+  const [useEmbedPlayer, setUseEmbedPlayer] = useState<boolean>(false);
+  const [isVideoLoading, setIsVideoLoading] = useState<boolean>(true);
+  const [videoError, setVideoError] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerWrapperRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const savedTimeRef = useRef<number>(0);
+
+  // Reset loading and error states on episode or URL switch
+  useEffect(() => {
+    setIsVideoLoading(true);
+    setVideoError(null);
+  }, [directVideoUrl, activeEpisodeNum, isPlayerOpen]);
 
   // Monitor browser fullscreen state change
   useEffect(() => {
@@ -831,77 +850,69 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
             </div>
 
             {/* Sección de Episodios */}
-            {(() => {
-              const displayEpisodes = (anime.episodes && anime.episodes.length > 0)
-                ? anime.episodes
-                : anime.telegramUrl
-                ? [{ number: 1, telegramUrl: anime.telegramUrl }]
-                : [];
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center">
+                <h3 className="font-mono text-[10px] text-neutral-400 uppercase tracking-widest">
+                  {displayEpisodes.length} {displayEpisodes.length === 1 ? 'Episodio' : 'Episodios'}
+                </h3>
+              </div>
 
-              const currentEpisode = displayEpisodes.find(ep => ep.number === activeEpisodeNum) || displayEpisodes[0];
+              {displayEpisodes.length > 0 ? (
+                <div className="grid grid-cols-2 gap-3 sm:gap-4 md:gap-5">
+                  {displayEpisodes.map((ep) => {
+                    const isActive = Number(ep.number) === Number(activeEpisodeNum);
+                    const epCover = ep.thumbnail || ep.coverImage || anime.coverData || anime.image;
 
-              return (
-                <div className="space-y-2 pt-1">
-                  <div className="flex items-center">
-                    <h3 className="font-mono text-[10px] text-neutral-400 uppercase tracking-widest">
-                      {displayEpisodes.length} {displayEpisodes.length === 1 ? 'Episodio' : 'Episodios'}
-                    </h3>
-                  </div>
-
-                  {displayEpisodes.length > 0 ? (
-                    <div className="grid grid-cols-2 gap-3 sm:gap-4 md:gap-5">
-                      {displayEpisodes.map((ep) => {
-                        const isActive = ep.number === activeEpisodeNum;
-                        const epCover = ep.thumbnail || ep.coverImage || anime.coverData || anime.image;
-
-                        return (
-                          <div
-                            key={ep.number}
-                            onClick={() => {
-                              setActiveEpisodeNum(ep.number);
-                              setIsPlayerOpen(true);
-                              if (onDownload) {
-                                onDownload(anime.id);
-                              }
+                    return (
+                      <div
+                        key={ep.number}
+                        onClick={() => {
+                          setActiveEpisodeNum(ep.number);
+                          setIsPlayerOpen(true);
+                          if (onDownload) {
+                            onDownload(anime.id);
+                          }
+                        }}
+                        className={`group relative aspect-video w-full rounded-2xl overflow-hidden cursor-pointer transition-all duration-300 shadow-xl select-none active:scale-[0.98] hover:opacity-95 outline-none ${
+                          isActive ? 'ring-2 ring-purple-500 ring-offset-2 ring-offset-black' : 'border-0'
+                        }`}
+                      >
+                        {/* Episode Thumbnail */}
+                        {epCover ? (
+                          <img
+                            src={epCover}
+                            alt={`Episodio ${ep.number}`}
+                            loading="eager"
+                            decoding="async"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            onError={(e) => {
+                              e.currentTarget.src = getFallbackSvg(anime.name);
                             }}
-                            className="group relative aspect-video w-full rounded-2xl overflow-hidden cursor-pointer transition-all duration-300 shadow-xl select-none active:scale-[0.98] hover:opacity-95 border-0 outline-none"
-                          >
-                            {/* Episode Thumbnail */}
-                            {epCover ? (
-                              <img
-                                src={epCover}
-                                alt={`Episodio ${ep.number}`}
-                                loading="eager"
-                                decoding="async"
-                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                onError={(e) => {
-                                  e.currentTarget.src = getFallbackSvg(anime.name);
-                                }}
-                              />
-                            ) : (
-                              <div className="w-full h-full bg-[#150a24] flex items-center justify-center">
-                                <Film className="h-8 w-8 text-purple-400/40" />
-                              </div>
-                            )}
-
-                            {/* Subtle dark gradient overlay */}
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/20 pointer-events-none" />
-
-                            {/* Compact, rounded and uniform EP badge */}
-                            <div className="absolute top-2 left-2 h-5 min-w-[38px] px-2 rounded-full bg-black/80 backdrop-blur-md flex items-center justify-center border border-white/10 shadow-sm">
-                              <span className="font-mono text-[9px] sm:text-[10px] font-bold text-white tracking-tight uppercase leading-none">
-                                EP {ep.number}
-                              </span>
-                            </div>
+                          />
+                        ) : (
+                          <div className="w-full h-full bg-[#150a24] flex items-center justify-center">
+                            <Film className="h-8 w-8 text-purple-400/40" />
                           </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="p-4 bg-black/20 border border-dark-border/40 rounded-2xl font-mono text-xs text-neutral-500 text-center">
-                      Próximamente episodios
-                    </div>
-                  )}
+                        )}
+
+                        {/* Subtle dark gradient overlay */}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/20 pointer-events-none" />
+
+                        {/* Compact, rounded and uniform EP badge */}
+                        <div className="absolute top-2 left-2 h-5 min-w-[38px] px-2 rounded-full bg-black/80 backdrop-blur-md flex items-center justify-center border border-white/10 shadow-sm">
+                          <span className="font-mono text-[9px] sm:text-[10px] font-bold text-white tracking-tight uppercase leading-none">
+                            EP {ep.number}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-4 bg-black/20 border border-dark-border/40 rounded-2xl font-mono text-xs text-neutral-500 text-center">
+                  Próximamente episodios
+                </div>
+              )}
 
                   {/* Sección de Recomendaciones */}
                   {recommendedAnimes.length > 0 && (
@@ -987,9 +998,25 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                             <h2 className="font-display text-sm sm:text-base font-semibold text-white truncate leading-tight">
                               {anime.name}
                             </h2>
+                            <span className="shrink-0 px-2 py-0.5 rounded-md bg-purple-950/80 border border-purple-800/60 font-mono text-[10px] font-bold text-purple-300">
+                              EP #{currentEpisode?.number || 1}
+                            </span>
                           </div>
 
                           <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Toggle modo embed si es de Archive.org */}
+                            {isArchiveUrl && (
+                              <button
+                                type="button"
+                                onClick={() => setUseEmbedPlayer(prev => !prev)}
+                                className="px-2.5 py-1 rounded-lg bg-neutral-900 border border-neutral-700/80 hover:border-purple-500 text-[10px] font-mono font-medium text-neutral-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
+                                title={useEmbedPlayer ? "Cambiar a reproductor directo HTML5 (rápido y nativo)" : "Cambiar a reproductor embed de Archive.org"}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full ${useEmbedPlayer ? 'bg-amber-400' : 'bg-emerald-400'}`} />
+                                <span>{useEmbedPlayer ? 'Modo Embed' : 'Modo Directo'}</span>
+                              </button>
+                            )}
+
                             {/* Botón Pantalla Completa Limpia */}
                             <button
                               type="button"
@@ -1032,7 +1059,7 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                           {/* Botón Flotante para Salir de Pantalla Completa en overlay */}
                           {isFullscreen && (
                             <div className="absolute top-4 right-4 z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center gap-2 bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-neutral-800">
-                              <span className="text-xs text-white font-medium">{anime.name}</span>
+                              <span className="text-xs text-white font-medium">{anime.name} - Ep {currentEpisode?.number || 1}</span>
                               <button
                                 type="button"
                                 onClick={toggleFullscreen}
@@ -1045,7 +1072,37 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                           )}
 
                           <div className="w-full h-full flex flex-col justify-center items-center bg-black relative overflow-hidden p-0 m-0 border-0 outline-none">
-                            {isArchiveUrl && useEmbedPlayer ? (
+                            {isTelegramUrl ? (
+                              <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-[#0a0712] text-center space-y-4">
+                                <div className="w-16 h-16 rounded-2xl bg-[#0088cc]/20 border border-[#0088cc]/40 flex items-center justify-center text-[#0088cc] shadow-lg shadow-[#0088cc]/10">
+                                  <Tv className="h-8 w-8" />
+                                </div>
+                                <div className="space-y-1.5 max-w-md">
+                                  <h3 className="font-display font-bold text-white text-base sm:text-lg">
+                                    Episodio #{currentEpisode?.number || 1} en Telegram
+                                  </h3>
+                                  <p className="text-xs text-neutral-400 font-sans leading-relaxed">
+                                    Este episodio está alojado directamente en el canal oficial de Telegram para reproducción en streaming o descarga a máxima calidad.
+                                  </p>
+                                </div>
+                                <a
+                                  href={rawVideoUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#0088cc] to-[#0099e6] hover:from-[#0099e6] hover:to-[#00aaff] text-white font-mono text-xs font-bold uppercase tracking-wider shadow-lg shadow-[#0088cc]/30 transition-all flex items-center gap-2 cursor-pointer active:scale-95"
+                                >
+                                  <ExternalLink className="h-4 w-4" />
+                                  <span>Abrir en Telegram</span>
+                                </a>
+                              </div>
+                            ) : !rawVideoUrl ? (
+                              <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-[#0a0712] text-center space-y-3">
+                                <Film className="h-10 w-10 text-neutral-600" />
+                                <p className="text-xs text-neutral-400 font-mono">
+                                  No hay enlace de video disponible para el Episodio #{currentEpisode?.number || 1}.
+                                </p>
+                              </div>
+                            ) : isArchiveUrl && useEmbedPlayer ? (
                               <iframe
                                 key={archiveEmbedUrl + (currentEpisode?.number || 1)}
                                 src={archiveEmbedUrl}
@@ -1055,19 +1112,87 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                                 allowFullScreen
                               />
                             ) : (
-                              <video
-                                ref={videoRef}
-                                key={directVideoUrl + (currentEpisode?.number || 1)}
-                                src={directVideoUrl}
-                                controls
-                                autoPlay
-                                playsInline
-                                preload="auto"
-                                controlsList="nodownload noplaybackrate"
-                                onContextMenu={(e) => e.preventDefault()}
-                                style={{ WebkitTouchCallout: 'none', userSelect: 'none' }}
-                                className="w-full aspect-video max-h-full object-contain bg-black select-none pointer-events-auto block m-0 p-0"
-                              />
+                              <div className="relative w-full h-full flex items-center justify-center bg-black">
+                                <video
+                                  ref={videoRef}
+                                  key={directVideoUrl + (currentEpisode?.number || 1)}
+                                  src={directVideoUrl}
+                                  controls
+                                  autoPlay
+                                  playsInline
+                                  preload="auto"
+                                  controlsList="nodownload noplaybackrate"
+                                  onContextMenu={(e) => e.preventDefault()}
+                                  onLoadedData={() => setIsVideoLoading(false)}
+                                  onCanPlay={() => setIsVideoLoading(false)}
+                                  onPlaying={() => {
+                                    setIsVideoLoading(false);
+                                    setVideoError(null);
+                                  }}
+                                  onWaiting={() => setIsVideoLoading(true)}
+                                  onError={(e) => {
+                                    console.warn("Video playback error:", e);
+                                    setIsVideoLoading(false);
+                                    setVideoError("No se pudo cargar el video automáticamente.");
+                                  }}
+                                  style={{ WebkitTouchCallout: 'none', userSelect: 'none' }}
+                                  className="w-full aspect-video max-h-full object-contain bg-black select-none pointer-events-auto block m-0 p-0"
+                                />
+
+                                {/* Indicador de carga visual centrado mientras bufferea */}
+                                {isVideoLoading && !videoError && (
+                                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 pointer-events-none z-10 backdrop-blur-xs">
+                                    <div className="w-10 h-10 border-3 border-purple-500/20 border-t-purple-500 rounded-full animate-spin" />
+                                    <span className="font-mono text-[11px] text-purple-200 mt-3 tracking-wider">Cargando episodio...</span>
+                                  </div>
+                                )}
+
+                                {/* Mensaje elegante si falla la carga directa */}
+                                {videoError && (
+                                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/85 p-6 text-center space-y-3 z-20">
+                                    <p className="text-xs text-rose-300 font-mono">{videoError}</p>
+                                    <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setVideoError(null);
+                                          setIsVideoLoading(true);
+                                          if (videoRef.current) {
+                                            videoRef.current.load();
+                                            videoRef.current.play().catch(() => {});
+                                          }
+                                        }}
+                                        className="px-3 py-1.5 rounded-lg bg-purple-900/80 hover:bg-purple-800 border border-purple-600 text-white font-mono text-[11px] transition-colors cursor-pointer"
+                                      >
+                                        Reintentar
+                                      </button>
+                                      {isArchiveUrl && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setVideoError(null);
+                                            setUseEmbedPlayer(true);
+                                          }}
+                                          className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-600 text-white font-mono text-[11px] transition-colors cursor-pointer"
+                                        >
+                                          Probar Reproductor Embed
+                                        </button>
+                                      )}
+                                      {directVideoUrl && (
+                                        <a
+                                          href={directVideoUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-300 hover:text-white font-mono text-[11px] transition-colors inline-flex items-center gap-1.5"
+                                        >
+                                          <ExternalLink className="h-3 w-3" />
+                                          <span>Abrir Video Directo</span>
+                                        </a>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             )}
                           </div>
                         </div>
@@ -1127,9 +1252,7 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                     document.body
                   )}
                 </div>
-              );
-            })()}
-          </div>
+              </div>
 
           {/* Global Comments Section for this Anime */}
           <div className="col-span-1 md:col-span-12 mt-8">

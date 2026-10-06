@@ -146,7 +146,8 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
       const explicitNewEps = eps.filter(ep => Boolean(ep.isNew));
       let targetEps = explicitNewEps;
 
-      if (targetEps.length === 0 && anime.status === 'Emisión') {
+      const isEmision = Boolean(anime.status && anime.status.toLowerCase().includes('emisi'));
+      if (targetEps.length === 0 && isEmision) {
         const hasAnyExplicitFlag = eps.some(ep => ep.isNew !== undefined);
         if (!hasAnyExplicitFlag) {
           targetEps = eps;
@@ -225,7 +226,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
     const targetEp = eps.find(e => Number(e.number) === epNumber);
 
     const defaultLink = targetEp?.mp4Url || targetEp?.telegramUrl || targetEp?.url || (epNumber === 1 ? anime.telegramUrl || '' : '');
-    const isNew = targetEp?.isNew !== undefined ? Boolean(targetEp.isNew) : anime.status === 'Emisión';
+    const isNew = targetEp?.isNew !== undefined ? Boolean(targetEp.isNew) : Boolean(anime.status && anime.status.toLowerCase().includes('emisi'));
 
     setEditingEpisode({
       number: epNumber,

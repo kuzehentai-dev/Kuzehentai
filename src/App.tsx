@@ -77,6 +77,8 @@ import {
 
 export type PageType = 'home' | 'detail' | 'admin' | 'my-list' | 'watched' | 'studio';
 
+const isEmisionStatus = (status?: string) => Boolean(status && (status.toLowerCase().includes('emisi') || status.toLowerCase().includes('emisión')));
+
 export default function App() {
   // Page routing state
   const [currentPage, setCurrentPage] = useState<PageType>('home');
@@ -984,7 +986,7 @@ export default function App() {
           return true;
         })();
 
-        const matchesDisplayMode = displayMode === 'catalog' || anime.status === 'Emisión';
+        const matchesDisplayMode = displayMode === 'catalog' || isEmisionStatus(anime.status);
 
         if (!matchesStudio || !matchesGenre || !matchesYear || !matchesStatus || !matchesDisplayMode || !matchesRating) {
           return false;
@@ -1073,8 +1075,8 @@ export default function App() {
         if (timeA !== timeB) return timeB - timeA;
 
         // Priority 2: Status 'Emisión'
-        const isEmisionA = a.status === 'Emisión' ? 1 : 0;
-        const isEmisionB = b.status === 'Emisión' ? 1 : 0;
+        const isEmisionA = isEmisionStatus(a.status) ? 1 : 0;
+        const isEmisionB = isEmisionStatus(b.status) ? 1 : 0;
         if (isEmisionB !== isEmisionA) return isEmisionB - isEmisionA;
 
         // Priority 3: Episodes count
@@ -1133,7 +1135,7 @@ export default function App() {
       let targetEps = explicitNewEps;
 
       // If none explicitly marked, but anime is in Emisión and has legacy episodes without explicit flags, fallback to eps
-      if (targetEps.length === 0 && anime.status === 'Emisión') {
+      if (targetEps.length === 0 && isEmisionStatus(anime.status)) {
         const hasAnyExplicitFlag = eps.some(ep => ep.isNew !== undefined);
         if (!hasAnyExplicitFlag) {
           targetEps = eps;
