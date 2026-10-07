@@ -3037,7 +3037,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                         className="w-full bg-[#050505] border border-dark-border focus:border-brand-red/50 rounded p-2 text-sm text-white outline-none transition-colors duration-300"
                       >
                         <option value="Finalizado">Finalizado</option>
-                        <option value="Emisión">En Emisión</option>
+                        <option value="Emisión">Emisión</option>
                       </select>
                     </div>
                   </div>
@@ -4695,6 +4695,17 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                     <div className="flex items-baseline gap-2">
                       <span className="text-neutral-400 font-semibold shrink-0">Géneros:</span>
                       <span className="text-neutral-200 line-clamp-2">{genreText}</span>
+                    </div>
+
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-neutral-400 font-semibold shrink-0">Estado:</span>
+                      <span className={`font-bold ${
+                        (selectedAnimeDetails.status?.toLowerCase().includes('emisi') || selectedAnimeDetails.status === 'Próximamente')
+                          ? 'text-emerald-400'
+                          : 'text-neutral-300'
+                      }`}>
+                        {(selectedAnimeDetails.status?.toLowerCase().includes('emisi') || selectedAnimeDetails.status === 'Próximamente') ? 'Emisión' : 'Finalizado'}
+                      </span>
                     </div>
 
                     <div className="flex items-baseline gap-2">

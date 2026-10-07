@@ -979,7 +979,16 @@ export default function App() {
         const matchesGenre = selectedGenreIds.length === 0 || 
           selectedGenreIds.every(gid => anime.genreIds?.includes(gid));
         const matchesYear = selectedYear === '' || (normalizeAnimeYear(anime.year) === selectedYear.trim());
-        const matchesStatus = true;
+        const matchesStatus = selectedStatus === '' || (() => {
+          const s = (anime.status || 'Finalizado').toLowerCase();
+          if (selectedStatus === 'Emisión' || selectedStatus === 'Próximamente') {
+            return s.includes('emisi') || s === 'próximamente' || s === 'emisión';
+          }
+          if (selectedStatus === 'Finalizado') {
+            return s.includes('finaliz');
+          }
+          return s === selectedStatus.toLowerCase();
+        })();
 
         const matchesRating = selectedRating === '' || (() => {
           const stats = getAnimeRatingStats(anime.id);
@@ -2098,7 +2107,7 @@ export default function App() {
 
               {selectedStatus && (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#ff5588]/15 border border-[#ff5588]/40 rounded-full text-xs text-[#ff5588] font-mono">
-                  Estado: {selectedStatus}
+                  Estado: {selectedStatus === 'Emisión' || selectedStatus === 'Próximamente' ? 'Emisión' : selectedStatus}
                   <button onClick={() => setSelectedStatus('')} className="hover:text-white"><X className="h-3 w-3" /></button>
                 </span>
               )}

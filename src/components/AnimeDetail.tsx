@@ -294,6 +294,14 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
   }, [isPlayerOpen, onBack]);
 
   // Compute episodes list and active episode with robust fallbacks
+  const isEmision = Boolean(
+    anime.status && (
+      anime.status === 'Próximamente' ||
+      anime.status.toLowerCase().includes('emisi')
+    )
+  );
+  const statusLabel = isEmision ? 'Emisión' : 'Finalizado';
+
   const displayEpisodes = useMemo(() => {
     if (anime.episodes && anime.episodes.length > 0) {
       const parsed = anime.episodes
@@ -641,6 +649,17 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                 <div className="absolute inset-0 z-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-pulse pointer-events-none" />
               )}
               <div className="absolute inset-0 z-20 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none" />
+
+              {/* Status Badge Overlay on Poster */}
+              <div className="absolute top-2.5 left-2.5 z-30">
+                <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[9.5px] font-sans font-bold tracking-tight shadow-md backdrop-blur-md border ${
+                  isEmision
+                    ? 'bg-emerald-950/85 text-emerald-300 border-emerald-500/50 shadow-emerald-950/50'
+                    : 'bg-neutral-950/85 text-neutral-300 border-neutral-700/50 shadow-black/50'
+                }`}>
+                  {statusLabel}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -696,7 +715,7 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
             </div>
 
             {/* Micro Metadata Metrics & Actions Row - Refined compact proportions */}
-            <div className="flex items-center gap-1 sm:gap-1.5 py-1 my-1 max-w-full overflow-x-auto sm:overflow-visible scrollbar-none whitespace-nowrap select-none">
+            <div className="flex items-center gap-1.5 sm:gap-2 py-1 my-1 max-w-full overflow-x-auto sm:overflow-visible scrollbar-none whitespace-nowrap select-none">
               {/* 1. Year */}
               {anime.year && (
                 <div className="flex items-center justify-center shrink-0 pr-0.5">
@@ -705,6 +724,17 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                   </span>
                 </div>
               )}
+
+              {/* Status Badge - Después del año, más pequeña, verde en emisión, sin punto parpadeante */}
+              <div className="shrink-0">
+                <span className={`h-5 sm:h-5.5 px-1.5 sm:px-2 rounded-md text-[9px] sm:text-[10px] font-sans font-bold tracking-tight border inline-flex items-center justify-center leading-none shadow-sm ${
+                  isEmision 
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10' 
+                    : 'bg-neutral-800/70 text-neutral-300 border-neutral-700/50 shadow-sm'
+                }`}>
+                  {statusLabel}
+                </span>
+              </div>
               
               {/* Rating Box Button - Horizontal pill matching row height (h-7 sm:h-8) and slightly longer left-to-right */}
               <div className="shrink-0">

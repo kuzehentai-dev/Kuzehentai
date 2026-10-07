@@ -50,7 +50,7 @@ const RATING_OPTIONS = [
 ];
 
 const STATUS_OPTIONS = [
-  { id: 'Próximamente', label: 'En Emisión' },
+  { id: 'Emisión', label: 'Emisión' },
   { id: 'Finalizado', label: 'Finalizado' },
 ];
 
@@ -131,6 +131,20 @@ function FilterModal({
       }
     });
     return Array.from(yearSet).sort((a, b) => b.localeCompare(a));
+  }, [animes]);
+
+  const statusCounts = useMemo(() => {
+    let emision = 0;
+    let finalizado = 0;
+    for (let i = 0; i < animes.length; i++) {
+      const s = (animes[i].status || 'Finalizado').toLowerCase();
+      if (s.includes('emisi') || s === 'próximamente') {
+        emision++;
+      } else {
+        finalizado++;
+      }
+    }
+    return { 'Emisión': emision, 'Finalizado': finalizado };
   }, [animes]);
 
   const handleToggleGenre = (genreId: string) => {
@@ -270,7 +284,49 @@ function FilterModal({
                 </div>
               </div>
 
-              {/* 3. GÉNEROS */}
+              {/* 3. ESTADO */}
+              <div>
+                <h3 className="font-sans text-[11px] font-medium text-neutral-400 uppercase tracking-widest mb-2.5">
+                  ESTADO
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onSelectStatus('')}
+                    className={`px-3 py-1.5 text-xs rounded-lg border transition-all cursor-pointer font-sans ${
+                      selectedStatus === ''
+                        ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium shadow-sm'
+                        : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
+                    }`}
+                  >
+                    Todos
+                  </button>
+                  {STATUS_OPTIONS.map(opt => {
+                    const isSelected = selectedStatus === opt.id || (opt.id === 'Emisión' && selectedStatus === 'Próximamente');
+                    const count = statusCounts[opt.id as 'Emisión' | 'Finalizado'] || 0;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => onSelectStatus(isSelected ? '' : opt.id)}
+                        className={`px-2.5 py-1.5 text-xs rounded-lg border transition-all cursor-pointer font-sans flex items-center gap-1.5 ${
+                          isSelected
+                            ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium shadow-sm'
+                            : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
+                        }`}
+                      >
+                        {isSelected && <Check className="h-3 w-3 shrink-0 stroke-[2.5]" />}
+                        <span>{opt.label}</span>
+                        {count > 0 && (
+                          <span className="text-[10px] opacity-60 font-mono">({count})</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 4. GÉNEROS */}
               {genres.length > 0 && (
                 <div>
                   <div className="flex items-center justify-between mb-2.5">
