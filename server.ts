@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import sharp from 'sharp';
 import { initializeApp } from 'firebase/app';
 import { 
   getFirestore, 
@@ -412,9 +413,22 @@ async function compressImageToWebpBuffer(imageStr: string): Promise<{ buffer: Bu
   return { buffer: inputBuffer, mimeType: detectedMime, extension: ext };
 }
 
-// Sin optimización: conserva la portada intacta
+// Optimiza y comprime portadas y miniaturas de episodios para no sobrecargar Firestore ni localStorage
 async function optimizeEpisodeCoverIfNeeded(coverStr: string): Promise<string> {
-  return coverStr || '';
+  if (!coverStr || !coverStr.startsWith('data:image/')) return coverStr || '';
+  try {
+    const base64Data = coverStr.replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(base64Data, 'base64');
+    // Si ya es muy ligera (menos de 35 KB), conservarla directamente
+    if (buffer.length <= 35 * 1024) return coverStr;
+    const resized = await sharp(buffer)
+      .resize({ width: 480, height: 270, fit: 'cover', withoutEnlargement: true })
+      .webp({ quality: 80 })
+      .toBuffer();
+    return `data:image/webp;base64,${resized.toString('base64')}`;
+  } catch (err) {
+    return coverStr;
+  }
 }
 
 // --- Episode Normalization & Safe Merge Helpers ---
@@ -442,22 +456,20 @@ function normalizeEpisodesList(eps: any): Episode[] {
         const link = String(
           ep.mp4Url || ep.telegramUrl || ep.url || ep.videoUrl || ep.link || ep.embedUrl || ep.streamUrl || ''
         ).trim();
-        if (link) {
-          result.push({
-            number,
-            mp4Url: link,
-            telegramUrl: link,
-            url: link,
-            videoUrl: link,
-            link: link,
-            isNew: Boolean(ep.isNew),
-            ...(ep.title ? { title: String(ep.title) } : {}),
-            ...(ep.name ? { name: String(ep.name) } : {}),
-            ...(ep.coverImage ? { coverImage: String(ep.coverImage) } : {}),
-            ...(ep.thumbnail ? { thumbnail: String(ep.thumbnail) } : {}),
-            ...(ep.addedToRecentAt ? { addedToRecentAt: String(ep.addedToRecentAt) } : {})
-          });
-        }
+        result.push({
+          number,
+          mp4Url: link,
+          telegramUrl: link,
+          url: link,
+          videoUrl: link,
+          link: link,
+          isNew: Boolean(ep.isNew),
+          ...(ep.title ? { title: String(ep.title) } : {}),
+          ...(ep.name ? { name: String(ep.name) } : {}),
+          ...(ep.coverImage ? { coverImage: String(ep.coverImage) } : {}),
+          ...(ep.thumbnail ? { thumbnail: String(ep.thumbnail) } : {}),
+          ...(ep.addedToRecentAt ? { addedToRecentAt: String(ep.addedToRecentAt) } : {})
+        });
       }
     });
   } else if (typeof eps === 'object') {
@@ -484,21 +496,19 @@ function normalizeEpisodesList(eps: any): Episode[] {
         if (val.addedToRecentAt) addedToRecentAt = String(val.addedToRecentAt);
       }
 
-      if (link) {
-        result.push({
-          number,
-          mp4Url: link,
-          telegramUrl: link,
-          url: link,
-          videoUrl: link,
-          link: link,
-          isNew: Boolean(isNew),
-          ...(title ? { title } : {}),
-          ...(coverImage ? { coverImage } : {}),
-          ...(thumbnail ? { thumbnail } : {}),
-          ...(addedToRecentAt ? { addedToRecentAt: String(addedToRecentAt) } : {})
-        });
-      }
+      result.push({
+        number,
+        mp4Url: link,
+        telegramUrl: link,
+        url: link,
+        videoUrl: link,
+        link: link,
+        isNew: Boolean(isNew),
+        ...(title ? { title } : {}),
+        ...(coverImage ? { coverImage } : {}),
+        ...(thumbnail ? { thumbnail } : {}),
+        ...(addedToRecentAt ? { addedToRecentAt: String(addedToRecentAt) } : {})
+      });
     });
   }
 
@@ -1282,9 +1292,6 @@ class DBService {
       anime.createdAt = anime.createdAt || new Date().toISOString();
     }
     anime.updatedAt = new Date().toISOString();
-    if (anime.status === 'Emisión' || anime.status === 'En Emisión') {
-      anime.status = 'Próximamente';
-    }
 
     const sIds = (anime.studioIds && anime.studioIds.length > 0)
       ? anime.studioIds
@@ -1304,15 +1311,6 @@ class DBService {
       }
       if (ep.thumbnail && ep.thumbnail.startsWith('data:image/')) {
         ep.thumbnail = await optimizeEpisodeCoverIfNeeded(ep.thumbnail);
-      }
-    }
-    // Si el anime está finalizado, ningún episodio debe estar marcado como nuevo y se elimina la portada de presentación (coverImage), pero se conserva la miniatura (thumbnail) y enlace de reproducción
-    if (anime.status === 'Finalizado') {
-      for (const ep of sanitizedEpisodes) {
-        ep.isNew = false;
-        if (ep.coverImage) {
-          delete ep.coverImage;
-        }
       }
     }
     const storageEpisodes = serializeEpisodesForStorage(sanitizedEpisodes);
@@ -1410,30 +1408,7 @@ class DBService {
     let evictedCount = 0;
     let evictedCoversCount = 0;
 
-    // 1. Si un anime es 'Finalizado', desmarcar isNew y borrar la portada de presentación (coverImage), pero CONSERVAR la miniatura del episodio (thumbnail) y enlace
-    for (const a of this.localDb.animes) {
-      if (a.status === 'Finalizado' && Array.isArray(a.episodes)) {
-        let animeChanged = false;
-        for (const ep of a.episodes) {
-          if (ep.isNew || ep.coverImage) {
-            ep.isNew = false;
-            delete ep.addedToRecentAt;
-            if (ep.coverImage) {
-              delete ep.coverImage;
-              evictedCoversCount++;
-            }
-            animeChanged = true;
-          }
-          // ep.thumbnail y ep.mp4Url NUNCA se borran
-        }
-        if (animeChanged) {
-          modifiedAny = true;
-          this.saveAnimeToFirestoreBg(a).catch(() => {});
-        }
-      }
-    }
-
-    // 2. Recolectar todos los episodios marcados como nuevos de animes no finalizados
+    // Recolectar todos los episodios marcados como nuevos (isNew: true)
     const activeNewEpisodes: {
       anime: Anime;
       ep: any;
@@ -1441,10 +1416,10 @@ class DBService {
     }[] = [];
 
     for (const a of this.localDb.animes) {
-      if (a.status === 'Finalizado' || !Array.isArray(a.episodes)) continue;
+      if (!Array.isArray(a.episodes)) continue;
       const baseTime = a.createdAt
         ? new Date(a.createdAt).getTime()
-        : (a.updatedAt ? new Date(a.updatedAt).getTime() : 0);
+        : 0;
 
       for (const ep of a.episodes) {
         if (ep.isNew) {
@@ -3206,21 +3181,19 @@ app.put('/api/animes/:id', authRequired, async (req, res) => {
       year: normalizeAnimeYear(year !== undefined ? year : existing.year),
       description: description !== undefined ? description : existing.description,
       telegramUrl: telegramUrl ? telegramUrl.trim() : existing.telegramUrl,
-      episodes: Array.isArray(episodes) ? episodes.map((ep: any) => {
+      episodes: Array.isArray(episodes) ? episodes.map((ep: any, idx: number) => {
         const epNum = Number(ep.number) || 1;
         const origEp = existing.episodes?.find((e: any) => Number(e.number) === epNum);
-        const isFin = (status || existing.status) === 'Finalizado';
-        const isNew = isFin ? false : (ep.isNew !== undefined ? Boolean(ep.isNew) : Boolean(origEp?.isNew));
-        const wasCurrentlyInRecents = Boolean(origEp?.isNew && origEp?.addedToRecentAt);
-        const preservedAddedAt = wasCurrentlyInRecents ? (ep.addedToRecentAt || origEp?.addedToRecentAt) : undefined;
-        const coverImage = isFin ? undefined : (ep.coverImage ? String(ep.coverImage) : origEp?.coverImage);
-        const thumbnail = ep.thumbnail ? String(ep.thumbnail) : (origEp?.thumbnail || undefined);
+        const isNew = ep.isNew !== undefined ? Boolean(ep.isNew) : Boolean(origEp?.isNew);
+        const addedToRecentAt = isNew ? (ep.addedToRecentAt || origEp?.addedToRecentAt || new Date(Date.now() + idx * 1000).toISOString()) : undefined;
+      const coverImage = 'coverImage' in ep ? (ep.coverImage ? String(ep.coverImage) : undefined) : origEp?.coverImage;
+      const thumbnail = 'thumbnail' in ep ? (ep.thumbnail ? String(ep.thumbnail) : undefined) : origEp?.thumbnail;
         return {
           ...(origEp || {}),
           ...ep,
           number: epNum,
           isNew,
-          addedToRecentAt: isNew ? (preservedAddedAt || new Date().toISOString()) : undefined,
+          addedToRecentAt,
           coverImage,
           thumbnail
         };
@@ -3243,30 +3216,24 @@ app.put('/api/animes/:id', authRequired, async (req, res) => {
 app.post('/api/admin/anime/:id/episodes', async (req, res) => {
   try {
     const { id } = req.params;
-    const { episodes, status } = req.body;
+    const { episodes } = req.body;
     if (!id) return res.status(400).json({ error: 'ID de anime requerido' });
 
     const animes = await db.getAnimes();
     const existing = animes.find(a => a.id === id);
     if (!existing) return res.status(404).json({ error: 'Anime no encontrado' });
 
-    let newStatus = status || existing.status;
-    if (newStatus === 'Emisión' || newStatus === 'En Emisión') {
-      newStatus = 'Próximamente';
-    }
-    const isFinalizado = newStatus === 'Finalizado';
-
     let processedEpisodes = Array.isArray(episodes) ? episodes : [];
     processedEpisodes = processedEpisodes.map((ep: any) => {
       const epNum = Number(ep.number) || 1;
       const existingEp = existing.episodes?.find((e: any) => Number(e.number) === epNum);
-      const isNew = isFinalizado ? false : Boolean(ep.isNew);
-      // Preservar la fecha original si el episodio ya estaba activo en recientes
-      const wasCurrentlyInRecents = Boolean(existingEp?.isNew && existingEp?.addedToRecentAt);
-      const preservedAddedAt = wasCurrentlyInRecents ? (ep.addedToRecentAt || existingEp?.addedToRecentAt) : undefined;
+      const isNew = Boolean(ep.isNew);
       const addedToRecentAt = isNew
-        ? (preservedAddedAt || new Date().toISOString())
+        ? (ep.addedToRecentAt || existingEp?.addedToRecentAt || new Date().toISOString())
         : undefined;
+
+      const finalCover = 'coverImage' in ep ? (ep.coverImage ? String(ep.coverImage) : undefined) : (existingEp?.coverImage || undefined);
+      const finalThumb = 'thumbnail' in ep ? (ep.thumbnail ? String(ep.thumbnail) : undefined) : (existingEp?.thumbnail || undefined);
 
       return {
         ...(existingEp || {}),
@@ -3274,14 +3241,13 @@ app.post('/api/admin/anime/:id/episodes', async (req, res) => {
         number: epNum,
         isNew,
         addedToRecentAt,
-        coverImage: isFinalizado ? undefined : (ep.coverImage ? String(ep.coverImage) : (existingEp?.coverImage || undefined)),
-        thumbnail: ep.thumbnail ? String(ep.thumbnail) : (existingEp?.thumbnail || undefined)
+        coverImage: finalCover,
+        thumbnail: finalThumb
       };
     });
 
     const updated: Anime = {
       ...existing,
-      status: newStatus,
       episodes: processedEpisodes,
       updatedAt: new Date().toISOString()
     };

@@ -32,21 +32,19 @@ export function normalizeEpisodesList(eps: any): Episode[] {
         const link = String(
           ep.mp4Url || ep.telegramUrl || ep.url || ep.videoUrl || ep.link || ep.embedUrl || ep.streamUrl || ''
         ).trim();
-        if (link) {
-          result.push({
-            number,
-            mp4Url: link,
-            telegramUrl: link,
-            url: link,
-            videoUrl: link,
-            link: link,
-            isNew: Boolean(ep.isNew),
-            ...(ep.title ? { title: String(ep.title) } : {}),
-            ...(ep.coverImage ? { coverImage: String(ep.coverImage) } : {}),
-            ...(ep.thumbnail ? { thumbnail: String(ep.thumbnail) } : {}),
-            ...(ep.addedToRecentAt ? { addedToRecentAt: String(ep.addedToRecentAt) } : {})
-          });
-        }
+        result.push({
+          number,
+          mp4Url: link,
+          telegramUrl: link,
+          url: link,
+          videoUrl: link,
+          link: link,
+          isNew: Boolean(ep.isNew),
+          ...(ep.title ? { title: String(ep.title) } : {}),
+          ...(ep.coverImage ? { coverImage: String(ep.coverImage) } : {}),
+          ...(ep.thumbnail ? { thumbnail: String(ep.thumbnail) } : {}),
+          ...(ep.addedToRecentAt ? { addedToRecentAt: String(ep.addedToRecentAt) } : {})
+        });
       }
     });
   } else if (typeof eps === 'object') {
@@ -73,21 +71,19 @@ export function normalizeEpisodesList(eps: any): Episode[] {
         if (val.addedToRecentAt) addedToRecentAt = String(val.addedToRecentAt);
       }
 
-      if (link) {
-        result.push({
-          number,
-          mp4Url: link,
-          telegramUrl: link,
-          url: link,
-          videoUrl: link,
-          link: link,
-          isNew: Boolean(isNew),
-          ...(title ? { title } : {}),
-          ...(coverImage ? { coverImage } : {}),
-          ...(thumbnail ? { thumbnail } : {}),
-          ...(addedToRecentAt ? { addedToRecentAt } : {})
-        });
-      }
+      result.push({
+        number,
+        mp4Url: link,
+        telegramUrl: link,
+        url: link,
+        videoUrl: link,
+        link: link,
+        isNew: Boolean(isNew),
+        ...(title ? { title } : {}),
+        ...(coverImage ? { coverImage } : {}),
+        ...(thumbnail ? { thumbnail } : {}),
+        ...(addedToRecentAt ? { addedToRecentAt } : {})
+      });
     });
   }
 

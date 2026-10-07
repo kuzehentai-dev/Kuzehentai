@@ -322,11 +322,19 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
       const match = displayEpisodes.find(ep => Number(ep.number) === Number(activeEpisodeNum));
       if (match) return match;
     }
-    return displayEpisodes[0];
-  }, [displayEpisodes, activeEpisodeNum]);
+    return displayEpisodes[0] || {
+      number: activeEpisodeNum || 1,
+      telegramUrl: anime.telegramUrl || '',
+      url: anime.telegramUrl || '',
+      mp4Url: anime.telegramUrl || '',
+      link: anime.telegramUrl || ''
+    };
+  }, [displayEpisodes, activeEpisodeNum, anime.telegramUrl]);
 
   // Expanded modal state
   const [isPlayerExpanded, setIsPlayerExpanded] = useState<boolean>(false);
+  const [videoPlaybackError, setVideoPlaybackError] = useState<boolean>(false);
+  const [isVideoPaused, setIsVideoPaused] = useState<boolean>(true);
 
   // Computed video URL for current episode
   const rawVideoUrl = useMemo(() => {
@@ -348,6 +356,10 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
         url = url.replace('archive.org/embed/', 'archive.org/download/');
       }
       url = url.replace(/[?&]autoplay=1/g, '');
+    }
+    // Encode spaces safely so HTML5 video element never fails on unencoded file paths
+    if (url.includes(' ')) {
+      url = url.replace(/ /g, '%20');
     }
     return url;
   }, [rawVideoUrl]);
@@ -405,16 +417,23 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
   // Reset saved time and trigger autoplay on URL or episode change
   useEffect(() => {
     savedTimeRef.current = 0;
-    if (isPlayerOpen && videoRef.current) {
-      const playPromise = videoRef.current.play();
-      if (playPromise !== undefined) {
-        playPromise.catch(() => {
-          if (videoRef.current) {
-            videoRef.current.muted = true;
-            videoRef.current.play().catch(() => {});
+    if (isPlayerOpen) {
+      const attemptPlay = () => {
+        if (videoRef.current) {
+          const playPromise = videoRef.current.play();
+          if (playPromise !== undefined) {
+            playPromise.catch(() => {
+              if (videoRef.current) {
+                videoRef.current.muted = true;
+                videoRef.current.play().catch(() => {});
+              }
+            });
           }
-        });
-      }
+        }
+      };
+      attemptPlay();
+      const timer = setTimeout(attemptPlay, 200);
+      return () => clearTimeout(timer);
     }
   }, [directVideoUrl, currentEpisode?.number, isPlayerOpen]);
 
@@ -687,17 +706,7 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                 </div>
               )}
               
-              {/* 2. Status Badge */}
-              <div className="shrink-0">
-                <div className="px-2 py-0.5 sm:px-2.5 sm:py-1 bg-[#1f1e24] border border-white/5 rounded-lg text-neutral-100 text-[10px] sm:text-[11px] font-semibold tracking-wide shadow-sm flex items-center justify-center gap-1.5 leading-none">
-                  {(anime.status === 'Próximamente' || anime.status?.toLowerCase().includes('emisión') || anime.status?.toLowerCase().includes('emision')) && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.9)] shrink-0 animate-pulse" />
-                  )}
-                  <span>{(anime.status === 'Próximamente' || anime.status?.toLowerCase().includes('emisi')) ? 'En Emisión' : (anime.status || 'Finalizado')}</span>
-                </div>
-              </div>
-
-              {/* 3. Rating Box Button - Horizontal pill matching row height (h-7 sm:h-8) and slightly longer left-to-right */}
+              {/* Rating Box Button - Horizontal pill matching row height (h-7 sm:h-8) and slightly longer left-to-right */}
               <div className="shrink-0">
                 <button
                   type="button"
@@ -1060,7 +1069,7 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                                 </p>
                               </div>
                             ) : (
-                              <div className="relative w-full h-full flex items-center justify-center bg-black">
+                              <div className="relative w-full h-full flex items-center justify-center bg-black group">
                                 <video
                                   ref={videoRef}
                                   key={directVideoUrl + (currentEpisode?.number || 1)}
@@ -1070,10 +1079,56 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                                   playsInline
                                   preload="auto"
                                   controlsList="nodownload noplaybackrate"
+                                  onPlay={() => {
+                                    setIsVideoPaused(false);
+                                    setVideoPlaybackError(false);
+                                  }}
+                                  onPause={() => setIsVideoPaused(true)}
+                                  onError={() => setVideoPlaybackError(true)}
                                   onContextMenu={(e) => e.preventDefault()}
+                                  onLoadedMetadata={() => {
+                                    if (videoRef.current) {
+                                      videoRef.current.play().catch(() => {});
+                                    }
+                                  }}
                                   style={{ WebkitTouchCallout: 'none', userSelect: 'none' }}
                                   className="w-full aspect-video max-h-full object-contain bg-black select-none pointer-events-auto block m-0 p-0"
                                 />
+
+                                {/* Fallback error overlay */}
+                                {videoPlaybackError && (
+                                  <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center p-4 text-center space-y-3 z-30">
+                                    <div className="w-12 h-12 rounded-xl bg-red-950/80 border border-red-800/60 flex items-center justify-center text-red-400">
+                                      <Film className="h-6 w-6" />
+                                    </div>
+                                    <p className="text-xs text-neutral-300 font-mono max-w-sm">
+                                      No se pudo reproducir automáticamente el video del Episodio #{currentEpisode?.number || 1}.
+                                    </p>
+                                    <div className="flex items-center gap-2 pt-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setVideoPlaybackError(false);
+                                          if (videoRef.current) {
+                                            videoRef.current.load();
+                                            videoRef.current.play().catch(() => {});
+                                          }
+                                        }}
+                                        className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-mono font-bold cursor-pointer transition-all active:scale-95 shadow-md"
+                                      >
+                                        Reintentar
+                                      </button>
+                                      <a
+                                        href={directVideoUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-mono cursor-pointer transition-all"
+                                      >
+                                        Abrir enlace directo
+                                      </a>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1090,7 +1145,7 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                           {/* Cuadrícula de 2 Columnas */}
                           <div className="grid grid-cols-2 gap-2 sm:gap-2.5 max-h-56 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-purple-900/60 scrollbar-track-transparent">
                             {displayEpisodes.map((ep) => {
-                              const isActive = ep.number === currentEpisode.number;
+                              const isActive = ep.number === (currentEpisode?.number || 1);
                               const epCover = ep.thumbnail || ep.coverImage || anime.coverData || anime.image;
 
                               return (

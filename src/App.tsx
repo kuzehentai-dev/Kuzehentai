@@ -979,10 +979,7 @@ export default function App() {
         const matchesGenre = selectedGenreIds.length === 0 || 
           selectedGenreIds.every(gid => anime.genreIds?.includes(gid));
         const matchesYear = selectedYear === '' || (normalizeAnimeYear(anime.year) === selectedYear.trim());
-        const matchesStatus = selectedStatus === '' || 
-          ((selectedStatus === 'Próximamente' || selectedStatus === 'Emisión')
-            ? isEmisionStatus(anime.status)
-            : anime.status === selectedStatus);
+        const matchesStatus = true;
 
         const matchesRating = selectedRating === '' || (() => {
           const stats = getAnimeRatingStats(anime.id);
@@ -995,7 +992,7 @@ export default function App() {
           return true;
         })();
 
-        const matchesDisplayMode = displayMode === 'catalog' || isEmisionStatus(anime.status);
+        const matchesDisplayMode = true;
 
         if (!matchesStudio || !matchesGenre || !matchesYear || !matchesStatus || !matchesDisplayMode || !matchesRating) {
           return false;
@@ -1077,18 +1074,10 @@ export default function App() {
       }
 
       if (displayMode === 'episodes') {
-        // Priority 1: Latest update/activity timestamp (updatedAt > createdAt)
-        // When episodes are added or anime is updated, updatedAt is set to that moment.
         const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
         const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
         if (timeA !== timeB) return timeB - timeA;
 
-        // Priority 2: Status 'Emisión'
-        const isEmisionA = isEmisionStatus(a.status) ? 1 : 0;
-        const isEmisionB = isEmisionStatus(b.status) ? 1 : 0;
-        if (isEmisionB !== isEmisionA) return isEmisionB - isEmisionA;
-
-        // Priority 3: Episodes count
         const epsA = a.episodes?.length || 0;
         const epsB = b.episodes?.length || 0;
         if (epsB !== epsA) return epsB - epsA;
@@ -1130,9 +1119,9 @@ export default function App() {
       timestamp: number;
     }[] = [];
 
-    filteredAnimes.forEach(anime => {
-      // Si el anime está finalizado, sus episodios nunca se muestran en la sección de Episodios
-      if (anime.status === 'Finalizado') return;
+    // Recorre animes sin discriminación de estado
+    animes.forEach(anime => {
+      if (anime.hidden) return;
 
       const eps = anime.episodes && anime.episodes.length > 0
         ? anime.episodes
@@ -1140,16 +1129,15 @@ export default function App() {
 
       // Filter episodes explicitly chosen with the toggle switch (isNew === true)
       const targetEps = eps.filter(ep => Boolean(ep.isNew));
-
       if (targetEps.length === 0) return;
 
       const baseTime = anime.createdAt
         ? new Date(anime.createdAt).getTime()
-        : (anime.updatedAt ? new Date(anime.updatedAt).getTime() : 0);
+        : 0;
 
       targetEps.forEach(ep => {
         const epNum = Number(ep.number) || 1;
-        // El timestamp toma addedToRecentAt si existe para respetar el orden exacto de llegada
+        // El timestamp toma addedToRecentAt si existe para respetar el orden exacto de agregación
         const epTimestamp = ep.addedToRecentAt
           ? new Date(ep.addedToRecentAt).getTime()
           : (baseTime + epNum * 1000);
@@ -1158,13 +1146,13 @@ export default function App() {
           anime,
           episodeNumber: epNum,
           episodeTitle: ep.title || ep.name,
-          coverImage: ep.coverImage,
+          coverImage: ep.coverImage || ep.thumbnail,
           timestamp: epTimestamp,
         });
       });
     });
 
-    // Sort newest first: mayor timestamp primero; si coincide, número de episodio mayor primero
+    // Orden de agregación: el episodio agregado más recientemente va de primero
     items.sort((a, b) => {
       if (b.timestamp !== a.timestamp) {
         return b.timestamp - a.timestamp;
@@ -1174,7 +1162,7 @@ export default function App() {
 
     // Limit to 30 episodes
     return items.slice(0, 30);
-  }, [filteredAnimes, displayMode]);
+  }, [animes, displayMode]);
 
   const totalCatalogPages = useMemo(() => {
     return Math.max(1, Math.ceil(sortedAnimes.length / ITEMS_PER_PAGE));

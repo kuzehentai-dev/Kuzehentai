@@ -537,10 +537,14 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
         const animeTitle = quickEpDetectedTitle.trim() || 'Nuevo Anime';
         const defaultStudioId = studios.length > 0 ? studios[0].id : '';
 
-        const episodesPayload = validItems.map(item => ({
+        const episodesPayload = validItems.map((item, idx) => ({
           number: Number(item.number) || 1,
           telegramUrl: item.url.trim(),
-          coverImage: item.coverImage
+          mp4Url: item.url.trim(),
+          isNew: true,
+          addedToRecentAt: new Date(Date.now() + idx * 1000).toISOString(),
+          coverImage: item.coverImage,
+          thumbnail: item.thumbnail
         })).sort((a, b) => a.number - b.number);
 
         const firstUrl = episodesPayload[0]?.telegramUrl || '';
@@ -551,7 +555,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
           coverData: '',
           studioId: defaultStudioId,
           genreIds: [],
-          status: 'Emisión',
+          status: 'Finalizado',
           year: new Date().getFullYear().toString(),
           description: '',
           telegramUrl: firstUrl,
@@ -578,7 +582,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       } else if (targetAnime) {
         const existingEps = targetAnime.episodes ? [...targetAnime.episodes] : [];
 
-        validItems.forEach(item => {
+        validItems.forEach((item, idx) => {
           const epNum = Number(item.number) || 1;
           const epUrlClean = item.url.trim();
           const existingIndex = existingEps.findIndex(e => e.number === epNum);
@@ -588,14 +592,20 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
               ...existingEps[existingIndex],
               mp4Url: epUrlClean,
               telegramUrl: epUrlClean,
-              ...(item.coverImage ? { coverImage: item.coverImage } : {})
+              isNew: true,
+              addedToRecentAt: new Date(Date.now() + idx * 1000).toISOString(),
+              ...(item.coverImage !== undefined ? { coverImage: item.coverImage } : {}),
+              ...(item.thumbnail !== undefined ? { thumbnail: item.thumbnail } : {})
             };
           } else {
             existingEps.push({
               number: epNum,
               mp4Url: epUrlClean,
               telegramUrl: epUrlClean,
-              coverImage: item.coverImage
+              isNew: true,
+              addedToRecentAt: new Date(Date.now() + idx * 1000).toISOString(),
+              coverImage: item.coverImage,
+              thumbnail: item.thumbnail
             });
           }
         });
@@ -1415,7 +1425,9 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       .join(', ');
     setAnimeGenresInput(initialGenreNames);
 
-    setAnimeStatus(anime.status === 'Emisión' ? 'Próximamente' : (anime.status || 'Finalizado'));
+    const rawStatus = anime.status || 'Finalizado';
+    const cleanStatus = (rawStatus.toLowerCase().includes('emisi') || rawStatus === 'Próximamente') ? 'Emisión' : 'Finalizado';
+    setAnimeStatus(cleanStatus);
     setAnimeYear(anime.year || '');
     setAnimeDescription(anime.description || '');
     setAnimeTelegramUrl(anime.telegramUrl || '');
@@ -1432,7 +1444,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
         isNew: Boolean(ep.isNew),
         addedToRecentAt: ep.addedToRecentAt,
         coverImage: ep.coverImage,
-        thumbnail: ep.thumbnail || ep.coverImage,
+        thumbnail: ep.thumbnail,
         title: ep.title
       })));
     } else {
@@ -1448,7 +1460,14 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
   const handleToggleEpisodeNew = (index: number) => {
     setAnimeEpisodes(prev => {
       const updated = [...prev];
-      updated[index] = { ...updated[index], isNew: !updated[index].isNew };
+      const nextIsNew = !updated[index].isNew;
+      updated[index] = { 
+        ...updated[index], 
+        isNew: nextIsNew,
+        addedToRecentAt: nextIsNew 
+          ? new Date().toISOString()
+          : undefined
+      };
       return updated;
     });
   };
@@ -1459,12 +1478,95 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
     reader.onload = (e) => {
       const result = e.target?.result as string;
       if (result) {
-        setAnimeEpisodes(prev => {
-          const updated = [...prev];
-          updated[index] = { ...updated[index], thumbnail: result };
-          return updated;
-        });
-        showNotification(`Miniatura lista para el Episodio ${animeEpisodes[index]?.number || (index + 1)}`, 'success');
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let w = img.width;
+          let h = img.height;
+          const maxW = 480;
+          const maxH = 270;
+          if (w > maxW || h > maxH) {
+            const ratio = Math.min(maxW / w, maxH / h);
+            w = Math.round(w * ratio);
+            h = Math.round(h * ratio);
+          }
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          let compressed = result;
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, w, h);
+            try {
+              compressed = canvas.toDataURL('image/webp', 0.82);
+            } catch {
+              compressed = canvas.toDataURL('image/jpeg', 0.82);
+            }
+          }
+          setAnimeEpisodes(prev => {
+            const updated = [...prev];
+            updated[index] = { ...updated[index], coverImage: compressed };
+            return updated;
+          });
+          showNotification(`Portada lista para el Episodio ${animeEpisodes[index]?.number || (index + 1)}`, 'success');
+        };
+        img.onerror = () => {
+          setAnimeEpisodes(prev => {
+            const updated = [...prev];
+            updated[index] = { ...updated[index], coverImage: result };
+            return updated;
+          });
+        };
+        img.src = result;
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleEpisodeThumbnailUpload = (index: number, file: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      if (result) {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let w = img.width;
+          let h = img.height;
+          const maxW = 480;
+          const maxH = 270;
+          if (w > maxW || h > maxH) {
+            const ratio = Math.min(maxW / w, maxH / h);
+            w = Math.round(w * ratio);
+            h = Math.round(h * ratio);
+          }
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          let compressed = result;
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, w, h);
+            try {
+              compressed = canvas.toDataURL('image/webp', 0.82);
+            } catch {
+              compressed = canvas.toDataURL('image/jpeg', 0.82);
+            }
+          }
+          setAnimeEpisodes(prev => {
+            const updated = [...prev];
+            updated[index] = { ...updated[index], thumbnail: compressed };
+            return updated;
+          });
+          showNotification(`Miniatura lista para el Episodio ${animeEpisodes[index]?.number || (index + 1)}`, 'success');
+        };
+        img.onerror = () => {
+          setAnimeEpisodes(prev => {
+            const updated = [...prev];
+            updated[index] = { ...updated[index], thumbnail: result };
+            return updated;
+          });
+        };
+        img.src = result;
       }
     };
     reader.readAsDataURL(file);
@@ -1772,17 +1874,16 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       }
     }
 
-    const isAnimeFinalizado = animeStatus === 'Finalizado';
     let cleanEpisodes = animeEpisodes
-      .map(ep => {
+      .map((ep, idx) => {
         const link = String(ep.telegramUrl || '').trim();
         const epNum = Number(ep.number) || 1;
         const origEp = editingAnime?.episodes?.find((e: any) => Number(e.number) === epNum);
-        const isNew = isAnimeFinalizado ? false : Boolean(ep.isNew);
+        const isNew = Boolean(ep.isNew);
         const wasCurrentlyInRecents = Boolean(origEp?.isNew && origEp?.addedToRecentAt);
         const preservedTimestamp = wasCurrentlyInRecents ? (ep.addedToRecentAt || origEp?.addedToRecentAt) : undefined;
-        const preservedCover = isAnimeFinalizado ? undefined : (ep.coverImage || origEp?.coverImage);
-        const preservedThumbnail = ep.thumbnail || origEp?.thumbnail || (ep.coverImage || origEp?.coverImage);
+        const preservedCover = ep.coverImage !== undefined ? ep.coverImage : origEp?.coverImage;
+        const preservedThumbnail = ep.thumbnail !== undefined ? ep.thumbnail : origEp?.thumbnail;
         return {
           number: epNum,
           telegramUrl: link,
@@ -1791,7 +1892,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
           mp4Url: link,
           link: link,
           isNew,
-          addedToRecentAt: isNew ? (preservedTimestamp || new Date().toISOString()) : undefined,
+          addedToRecentAt: isNew ? (preservedTimestamp || new Date(Date.now() + idx).toISOString()) : undefined,
           coverImage: preservedCover,
           thumbnail: preservedThumbnail,
           title: ep.title || origEp?.title
@@ -1806,7 +1907,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       return setAnimeFormError('El enlace de Telegram es requerido.');
     }
 
-    if (cleanEpisodes.length === 0 && singleEpIsNew && primaryTelegramUrl && !isAnimeFinalizado) {
+    if (cleanEpisodes.length === 0 && singleEpIsNew && primaryTelegramUrl) {
       cleanEpisodes = [{
         number: 1,
         telegramUrl: primaryTelegramUrl,
@@ -1821,7 +1922,6 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
     }
 
     const finalCover = animeImage;
-    const targetStatus = animeStatus === 'Emisión' ? 'Próximamente' : animeStatus;
 
     const payload = {
       name: trimmedName,
@@ -1830,7 +1930,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       studioId: primaryStudioId,
       studioIds: targetStudioIds,
       genreIds: targetGenreIds,
-      status: targetStatus,
+      status: animeStatus || 'Finalizado',
       year: normalizeAnimeYear(animeYear),
       description: animeDescription,
       telegramUrl: primaryTelegramUrl,
@@ -2881,7 +2981,6 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                           )}
                         </div>
                       </div>
-                    </div>
 
                     {/* Enlace de Telegram */}
                     <div className="space-y-1">
@@ -2912,46 +3011,38 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                       />
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {/* Year */}
-                      <div className="space-y-1">
-                        <label className="font-mono text-[9px] text-neutral-400 uppercase tracking-widest block">
-                          Año
-                        </label>
-                        <input
-                          type="text"
-                          value={animeYear}
-                          onChange={(e) => setAnimeYear(e.target.value)}
-                          onBlur={() => setAnimeYear(prev => normalizeAnimeYear(prev))}
-                          placeholder="p.ej. 2026"
-                          className="w-full bg-[#050505] border border-dark-border focus:border-brand-red/50 rounded p-2 text-sm text-white placeholder-neutral-800 outline-none transition-colors duration-300"
-                        />
-                      </div>
-
-                      {/* Status */}
-                      <div className="space-y-1">
-                        <label className="font-mono text-[9px] text-neutral-400 uppercase tracking-widest block">
-                          Estado *
-                        </label>
-                        <select
-                          value={animeStatus === 'Emisión' ? 'Próximamente' : animeStatus}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setAnimeStatus(val);
-                            if (val === 'Finalizado') {
-                              setAnimeEpisodes(prev => prev.map(ep => ({ ...ep, isNew: false })));
-                              setSingleEpIsNew(false);
-                            }
-                          }}
-                          className="w-full bg-[#050505] border border-dark-border focus:border-brand-red/50 rounded p-2.5 text-sm text-white outline-none transition-colors duration-300"
-                        >
-                          <option value="Próximamente">En Emisión</option>
-                          <option value="Finalizado">Finalizado</option>
-                        </select>
-                      </div>
+                    {/* Year */}
+                    <div className="space-y-1">
+                      <label className="font-mono text-[9px] text-neutral-400 uppercase tracking-widest block">
+                        Año
+                      </label>
+                      <input
+                        type="text"
+                        value={animeYear}
+                        onChange={(e) => setAnimeYear(e.target.value)}
+                        onBlur={() => setAnimeYear(prev => normalizeAnimeYear(prev))}
+                        placeholder="p.ej. 2026"
+                        className="w-full bg-[#050505] border border-dark-border focus:border-brand-red/50 rounded p-2 text-sm text-white placeholder-neutral-800 outline-none transition-colors duration-300"
+                      />
                     </div>
 
-                    {/* Genres Selection */}
+                    {/* Estado */}
+                    <div className="space-y-1">
+                      <label className="font-mono text-[9px] text-neutral-400 uppercase tracking-widest block">
+                        Estado
+                      </label>
+                      <select
+                        value={animeStatus}
+                        onChange={(e) => setAnimeStatus(e.target.value)}
+                        className="w-full bg-[#050505] border border-dark-border focus:border-brand-red/50 rounded p-2 text-sm text-white outline-none transition-colors duration-300"
+                      >
+                        <option value="Finalizado">Finalizado</option>
+                        <option value="Emisión">En Emisión</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Genres Selection */}
                     <div className="space-y-2">
                       <label className="font-mono text-[9px] text-neutral-400 uppercase tracking-widest block">
                         Géneros *
@@ -3019,22 +3110,16 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                           </span>
                           <button
                             type="button"
-                            onClick={() => {
-                              if (animeStatus === 'Finalizado') {
-                                setSingleEpIsNew(false);
-                              } else {
-                                setSingleEpIsNew(prev => !prev);
-                              }
-                            }}
+                            onClick={() => setSingleEpIsNew(prev => !prev)}
                             className={`h-[26px] px-2.5 rounded-md flex items-center gap-1.5 font-mono text-[10px] font-bold transition-all cursor-pointer select-none border ${
-                              singleEpIsNew && animeStatus !== 'Finalizado'
+                              singleEpIsNew
                                 ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm shadow-emerald-600/30'
                                 : 'bg-transparent text-neutral-500 border-neutral-800 hover:text-neutral-300'
                             }`}
-                            title={singleEpIsNew && animeStatus !== 'Finalizado' ? "Marcado para mostrarse en la sección Episodios" : "Oculto en la sección Episodios"}
+                            title={singleEpIsNew ? "Marcado para mostrarse en la sección Episodios" : "Oculto en la sección Episodios"}
                           >
-                            <span className={`w-1.5 h-1.5 rounded-full ${singleEpIsNew && animeStatus !== 'Finalizado' ? 'bg-white animate-pulse' : 'bg-neutral-600'}`} />
-                            <span>{singleEpIsNew && animeStatus !== 'Finalizado' ? 'Mostrar' : 'Oculto'}</span>
+                            <span className={`w-1.5 h-1.5 rounded-full ${singleEpIsNew ? 'bg-white animate-pulse' : 'bg-neutral-600'}`} />
+                            <span>{singleEpIsNew ? 'Mostrar' : 'Oculto'}</span>
                           </button>
                         </div>
                       </div>
@@ -3102,23 +3187,23 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                                 />
                               </div>
 
-                              {/* Botón miniatura al lado del enlace: '+' si no hay, '✓' si está lista */}
+                              {/* Botón Portada al lado del enlace: '+' si no hay, '✓' si está lista */}
                               <label
-                                className={`h-8 w-8 shrink-0 flex items-center justify-center rounded cursor-pointer transition-all border group select-none ${
-                                  ep.thumbnail || ep.coverImage
-                                    ? 'bg-emerald-950/40 border-emerald-500/60 text-emerald-400 hover:bg-emerald-900/50 shadow-sm'
+                                className={`h-8 px-2 shrink-0 flex items-center justify-center gap-1 rounded cursor-pointer transition-all border group select-none text-[10px] font-mono ${
+                                  ep.coverImage
+                                    ? 'bg-purple-950/50 border-purple-500/70 text-purple-300 hover:bg-purple-900/50 shadow-sm'
                                     : 'bg-[#0a0a0a] border-dark-border hover:border-purple-500/60 text-neutral-400 hover:text-white'
                                 }`}
-                                title={ep.thumbnail || ep.coverImage ? 'Miniatura lista (clic para cambiar, clic derecho para quitar)' : 'Agregar miniatura al episodio'}
+                                title={ep.coverImage ? 'Portada lista (clic para cambiar, clic derecho para quitar)' : 'Agregar portada (sección inicio)'}
                                 onContextMenu={(e) => {
-                                  if (ep.thumbnail || ep.coverImage) {
+                                  if (ep.coverImage) {
                                     e.preventDefault();
                                     setAnimeEpisodes(prev => {
                                       const updated = [...prev];
-                                      updated[idx] = { ...updated[idx], thumbnail: undefined, coverImage: undefined };
+                                      updated[idx] = { ...updated[idx], coverImage: undefined };
                                       return updated;
                                     });
-                                    showNotification(`Miniatura removida del Episodio ${ep.number}`, 'success');
+                                    showNotification(`Portada removida del Episodio ${ep.number}`, 'success');
                                   }
                                 }}
                               >
@@ -3134,11 +3219,52 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                                     }
                                   }}
                                 />
-                                {ep.thumbnail || ep.coverImage ? (
-                                  <Check className="h-4 w-4 text-emerald-400 stroke-[2.5]" />
+                                {ep.coverImage ? (
+                                  <Check className="h-3.5 w-3.5 text-purple-400 stroke-[2.5]" />
                                 ) : (
-                                  <Plus className="h-4 w-4 text-neutral-400 group-hover:text-purple-300 transition-colors" />
+                                  <Plus className="h-3.5 w-3.5 text-neutral-400 group-hover:text-purple-300 transition-colors" />
                                 )}
+                                <span className="hidden sm:inline">Portada</span>
+                              </label>
+
+                              {/* Botón Miniatura al lado del enlace: '+' si no hay, '✓' si está lista */}
+                              <label
+                                className={`h-8 px-2 shrink-0 flex items-center justify-center gap-1 rounded cursor-pointer transition-all border group select-none text-[10px] font-mono ${
+                                  ep.thumbnail
+                                    ? 'bg-emerald-950/50 border-emerald-500/70 text-emerald-300 hover:bg-emerald-900/50 shadow-sm'
+                                    : 'bg-[#0a0a0a] border-dark-border hover:border-emerald-500/60 text-neutral-400 hover:text-white'
+                                }`}
+                                title={ep.thumbnail ? 'Miniatura lista (clic para cambiar, clic derecho para quitar)' : 'Agregar miniatura (reproductor e interna)'}
+                                onContextMenu={(e) => {
+                                  if (ep.thumbnail) {
+                                    e.preventDefault();
+                                    setAnimeEpisodes(prev => {
+                                      const updated = [...prev];
+                                      updated[idx] = { ...updated[idx], thumbnail: undefined };
+                                      return updated;
+                                    });
+                                    showNotification(`Miniatura removida del Episodio ${ep.number}`, 'success');
+                                  }
+                                }}
+                              >
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      handleEpisodeThumbnailUpload(idx, file);
+                                      e.target.value = '';
+                                    }
+                                  }}
+                                />
+                                {ep.thumbnail ? (
+                                  <Check className="h-3.5 w-3.5 text-emerald-400 stroke-[2.5]" />
+                                ) : (
+                                  <Plus className="h-3.5 w-3.5 text-neutral-400 group-hover:text-emerald-300 transition-colors" />
+                                )}
+                                <span className="hidden sm:inline">Miniatura</span>
                               </label>
 
                               {/* Interruptor pequeño: Verde cuando se muestra, sin color/neutral cuando no */}
@@ -3146,15 +3272,15 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                                 type="button"
                                 onClick={() => handleToggleEpisodeNew(idx)}
                                 className={`h-8 px-2 sm:px-2.5 rounded shrink-0 flex items-center justify-center gap-1 font-mono text-[10px] font-bold transition-all cursor-pointer select-none border ${
-                                  ep.isNew && animeStatus !== 'Finalizado'
+                                  ep.isNew
                                     ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm shadow-emerald-600/30'
                                     : 'bg-transparent text-neutral-500 border-neutral-800 hover:text-neutral-300 hover:border-neutral-700'
                                 }`}
-                                title={ep.isNew && animeStatus !== 'Finalizado' ? "Mostrándose en la sección Episodios (Clic para ocultar)" : "Oculto en la sección Episodios (Clic para mostrar)"}
+                                title={ep.isNew ? "Mostrándose en la sección Episodios (Clic para ocultar)" : "Oculto en la sección Episodios (Clic para mostrar)"}
                               >
-                                <span className={`w-1.5 h-1.5 rounded-full ${ep.isNew && animeStatus !== 'Finalizado' ? 'bg-white animate-pulse' : 'bg-neutral-600'}`} />
-                                <span className="hidden sm:inline">{ep.isNew && animeStatus !== 'Finalizado' ? 'Mostrar' : 'Oculto'}</span>
-                                <span className="sm:hidden">{ep.isNew && animeStatus !== 'Finalizado' ? 'ON' : 'OFF'}</span>
+                                <span className={`w-1.5 h-1.5 rounded-full ${ep.isNew ? 'bg-white animate-pulse' : 'bg-neutral-600'}`} />
+                                <span className="hidden sm:inline">{ep.isNew ? 'Mostrar' : 'Oculto'}</span>
+                                <span className="sm:hidden">{ep.isNew ? 'ON' : 'OFF'}</span>
                               </button>
 
                               {/* Botón eliminar episodio: DE ÚLTIMO */}
@@ -3343,22 +3469,14 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                                   {anime.name}
                                 </h4>
 
-                                {/* Year + Status Dot (gray if Finalizado, green if Emisión) */}
-                                <div className="flex items-center gap-1.5 mt-0.5">
-                                  {anime.year && (
+                                {/* Year */}
+                                {anime.year && (
+                                  <div className="flex items-center gap-1.5 mt-0.5">
                                     <span className="text-[11px] sm:text-xs text-neutral-400 font-mono">
                                       ({anime.year})
                                     </span>
-                                  )}
-                                  <span 
-                                    className={`w-2 h-2 rounded-full shrink-0 ${
-                                      isEmision 
-                                        ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.9)] animate-pulse' 
-                                        : 'bg-neutral-500'
-                                    }`}
-                                    title={isEmision ? 'En emisión' : 'Finalizado'}
-                                  />
-                                </div>
+                                  </div>
+                                )}
 
                                 {/* Studio Name in Violet */}
                                 <div className="font-mono text-xs font-bold text-[#c084fc] uppercase tracking-wider mt-0.5 truncate">

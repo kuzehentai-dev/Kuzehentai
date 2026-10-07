@@ -25,9 +25,36 @@ interface AdminEpisodeManagerProps {
   showNotification: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-// Raw original episode cover image without compression
-const compressEpisodeCover = (base64Str: string): Promise<string> => {
-  return Promise.resolve(base64Str);
+// Compresión limpia para portadas de episodios (máximo ~35KB)
+const compressEpisodeCover = (base64Str: string, maxWidth = 480, maxHeight = 270): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let w = img.width;
+      let h = img.height;
+      if (w > maxWidth || h > maxHeight) {
+        const ratio = Math.min(maxWidth / w, maxHeight / h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, w, h);
+        try {
+          resolve(canvas.toDataURL('image/webp', 0.82));
+        } catch {
+          resolve(canvas.toDataURL('image/jpeg', 0.82));
+        }
+      } else {
+        resolve(base64Str);
+      }
+    };
+    img.onerror = () => resolve(base64Str);
+    img.src = base64Str;
+  });
 };
 
 export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
@@ -49,6 +76,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
     number: number;
     mp4Url: string;
     coverImage?: string;
+    thumbnail?: string;
     isNew: boolean;
     addedToRecentAt?: string;
     title?: string;
@@ -57,12 +85,14 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [isCleaningCap, setIsCleaningCap] = useState(false);
 
-  // Quick URL input modal state for episode cover
+  // Quick URL input modal state for episode cover or thumbnail
   const [showUrlModal, setShowUrlModal] = useState(false);
+  const [urlModalTarget, setUrlModalTarget] = useState<'cover' | 'thumbnail'>('cover');
   const [tempImageUrl, setTempImageUrl] = useState('');
 
-  // File input ref for episode image upload
+  // File input refs for episode image uploads
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const thumbFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Selected Anime reference
   const selectedAnime = useMemo(() => {
@@ -99,8 +129,6 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
     }[] = [];
 
     animes.forEach(anime => {
-      if (anime.status === 'Finalizado') return;
-
       const eps = anime.episodes && anime.episodes.length > 0
         ? anime.episodes
         : (anime.telegramUrl ? [{ number: 1, mp4Url: anime.telegramUrl, isNew: false }] : []);
@@ -185,6 +213,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
       number: epNumber,
       mp4Url: defaultLink,
       coverImage: targetEp?.coverImage || undefined,
+      thumbnail: targetEp?.thumbnail || undefined,
       isNew,
       addedToRecentAt: targetEp?.addedToRecentAt || undefined,
       title: targetEp?.title || targetEp?.name || undefined,
@@ -198,7 +227,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
     setEditingEpisode(null);
   };
 
-  // Trigger file upload dialog
+  // Trigger file upload dialog for cover
   const handleTriggerUpload = () => {
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -206,7 +235,15 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
     }
   };
 
-  // Process uploaded image
+  // Trigger file upload dialog for thumbnail
+  const handleTriggerThumbUpload = () => {
+    if (thumbFileInputRef.current) {
+      thumbFileInputRef.current.value = '';
+      thumbFileInputRef.current.click();
+    }
+  };
+
+  // Process uploaded cover image
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !editingEpisode) return;
@@ -221,7 +258,8 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
       reader.onload = async (event) => {
         const rawBase64 = event.target?.result as string;
         if (rawBase64) {
-          setEditingEpisode(prev => prev ? { ...prev, coverImage: rawBase64 } : null);
+          const compressed = await compressEpisodeCover(rawBase64);
+          setEditingEpisode(prev => prev ? { ...prev, coverImage: compressed } : null);
           showNotification(`Portada del Episodio #${editingEpisode.number} actualizada.`, 'success');
         }
       };
@@ -232,12 +270,44 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
     }
   };
 
-  // Assign URL cover image
+  // Process uploaded thumbnail image
+  const handleThumbFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editingEpisode) return;
+
+    if (!file.type.startsWith('image/')) {
+      showNotification('Selecciona un archivo de imagen válido.', 'error');
+      return;
+    }
+
+    try {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const rawBase64 = event.target?.result as string;
+        if (rawBase64) {
+          const compressed = await compressEpisodeCover(rawBase64);
+          setEditingEpisode(prev => prev ? { ...prev, thumbnail: compressed } : null);
+          showNotification(`Miniatura del Episodio #${editingEpisode.number} actualizada.`, 'success');
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.warn('Error reading image file:', err);
+      showNotification('Error al leer el archivo de imagen.', 'error');
+    }
+  };
+
+  // Assign URL image to cover or thumbnail independently
   const handleSaveUrlCover = () => {
     const trimmed = tempImageUrl.trim();
     if (trimmed && editingEpisode) {
-      setEditingEpisode(prev => prev ? { ...prev, coverImage: trimmed } : null);
-      showNotification('Portada asignada correctamente.', 'success');
+      if (urlModalTarget === 'cover') {
+        setEditingEpisode(prev => prev ? { ...prev, coverImage: trimmed } : null);
+        showNotification('Portada asignada correctamente.', 'success');
+      } else {
+        setEditingEpisode(prev => prev ? { ...prev, thumbnail: trimmed } : null);
+        showNotification('Miniatura asignada correctamente.', 'success');
+      }
     }
     setShowUrlModal(false);
     setTempImageUrl('');
@@ -257,12 +327,9 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
       const targetIdx = existing.findIndex(e => Number(e.number) === selectedEpNumber);
       const existingEp = targetIdx >= 0 ? existing[targetIdx] : null;
 
-      // Si el episodio ya estaba activo en la sección Episodios, se conserva su timestamp intacto al editar portada o link.
-      // Si se está agregando como nuevo episodio (o reactivando tras haber salido), toma la fecha actual (new Date().toISOString())
-      // para posicionarse de PRIMERO (#1) en la rotación (31, 1, 2, ... 29, 30).
-      const wasCurrentlyInRecents = Boolean(existingEp?.isNew && existingEp?.addedToRecentAt);
+      // Cada episodio guardado con 'isNew: true' recibe el timestamp actual para posicionarse de primero en orden de agregación
       const finalAddedToRecentAt = editingEpisode.isNew
-        ? (wasCurrentlyInRecents ? (existingEp?.addedToRecentAt || editingEpisode.addedToRecentAt) : new Date().toISOString())
+        ? (editingEpisode.addedToRecentAt || existingEp?.addedToRecentAt || new Date().toISOString())
         : undefined;
 
       const updatedItem: Episode = {
@@ -271,8 +338,8 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
         telegramUrl: cleanLink,
         isNew: Boolean(editingEpisode.isNew),
         addedToRecentAt: finalAddedToRecentAt,
-        coverImage: (editingEpisode.isNew && editingEpisode.coverImage) ? String(editingEpisode.coverImage) : undefined,
-        thumbnail: existingEp?.thumbnail,
+        coverImage: editingEpisode.coverImage ? String(editingEpisode.coverImage) : undefined,
+        thumbnail: editingEpisode.thumbnail ? String(editingEpisode.thumbnail) : undefined,
         title: editingEpisode.title || existingEp?.title
       };
 
@@ -280,7 +347,8 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
         existing[targetIdx] = {
           ...existing[targetIdx],
           ...updatedItem,
-          thumbnail: existingEp?.thumbnail || existing[targetIdx].thumbnail
+          coverImage: updatedItem.coverImage,
+          thumbnail: updatedItem.thumbnail
         };
       } else {
         existing.push(updatedItem);
@@ -291,8 +359,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          episodes: existing,
-          status: (selectedAnime.status === 'Finalizado' ? 'Finalizado' : 'Próximamente')
+          episodes: existing
         })
       });
 
@@ -339,6 +406,14 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
         accept="image/*"
         className="hidden"
       />
+      {/* Hidden file input for thumbnail uploads */}
+      <input
+        type="file"
+        ref={thumbFileInputRef}
+        onChange={handleThumbFileChange}
+        accept="image/*"
+        className="hidden"
+      />
 
       {/* URL Input Modal */}
       {showUrlModal && editingEpisode && (
@@ -347,7 +422,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
             <div className="flex items-center justify-between pb-2 border-b border-purple-950/60">
               <h4 className="font-display font-medium text-sm text-white flex items-center gap-2">
                 <LinkIcon className="h-4 w-4 text-purple-400" />
-                Ingresar URL de Portada del Episodio #{editingEpisode.number}
+                Ingresar URL de {urlModalTarget === 'cover' ? 'Portada' : 'Miniatura'} del Episodio #{editingEpisode.number}
               </h4>
               <button
                 onClick={() => { setShowUrlModal(false); setTempImageUrl(''); }}
@@ -362,7 +437,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
                 type="url"
                 value={tempImageUrl}
                 onChange={(e) => setTempImageUrl(e.target.value)}
-                placeholder="https://ejemplo.com/portada.jpg"
+                placeholder="https://ejemplo.com/imagen.jpg"
                 className="w-full bg-[#07050d] border border-purple-900/60 rounded-lg px-3 py-2 text-xs text-white focus:border-purple-500 focus:outline-none"
                 autoFocus
               />
@@ -389,7 +464,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
                 disabled={!tempImageUrl.trim()}
                 className="px-4 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-mono font-bold cursor-pointer"
               >
-                Aplicar Portada
+                Aplicar {urlModalTarget === 'cover' ? 'Portada' : 'Miniatura'}
               </button>
             </div>
           </div>
@@ -628,14 +703,19 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
               </div>
             </div>
 
-            {/* Field: Portada del Episodio */}
+            {/* Field: Portada del Episodio (Para sección de Nuevos Episodios / inicio) */}
             <div className="space-y-2 pt-2 border-t border-purple-950/80">
-              <label className="text-xs font-mono text-purple-200 font-semibold block">
-                Portada del Episodio:
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-mono text-purple-200 font-semibold block">
+                  Portada del Episodio:
+                </label>
+                <span className="text-[10px] font-mono text-purple-400 bg-purple-950/60 px-2 py-0.5 rounded border border-purple-900/40">
+                  Para tarjeta en inicio
+                </span>
+              </div>
 
               <div className="bg-[#07050d] border border-purple-950 rounded-xl p-3 flex flex-col sm:flex-row items-center gap-4">
-                {/* Thumbnail Preview */}
+                {/* Cover Preview */}
                 <div className="relative w-32 h-20 rounded-lg bg-black shrink-0 overflow-hidden border border-purple-900/60 flex items-center justify-center shadow-inner">
                   {editingEpisode.coverImage ? (
                     <img
@@ -656,7 +736,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
                 <div className="flex-1 w-full space-y-2">
                   <p className="text-xs text-neutral-300 font-sans">
                     {editingEpisode.coverImage
-                      ? 'Tiene una portada personalizada asignada.'
+                      ? 'Tiene una portada personalizada para la página de inicio.'
                       : 'Puedes subir una portada individual o ingresar una URL. Si no agregas una, usará la del anime.'}
                   </p>
 
@@ -673,6 +753,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
                     <button
                       type="button"
                       onClick={() => {
+                        setUrlModalTarget('cover');
                         setShowUrlModal(true);
                         setTempImageUrl(editingEpisode.coverImage || '');
                       }}
@@ -691,6 +772,82 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                         <span>Quitar Portada</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Field: Miniatura del Episodio (Interna, para el reproductor y lista de episodios) */}
+            <div className="space-y-2 pt-2 border-t border-purple-950/80">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-mono text-emerald-200 font-semibold block">
+                  Miniatura del Episodio:
+                </label>
+                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-900/40">
+                  Para reproductor y lista interna
+                </span>
+              </div>
+
+              <div className="bg-[#07050d] border border-emerald-950/60 rounded-xl p-3 flex flex-col sm:flex-row items-center gap-4">
+                {/* Thumbnail Preview */}
+                <div className="relative w-32 h-20 rounded-lg bg-black shrink-0 overflow-hidden border border-emerald-900/60 flex items-center justify-center shadow-inner">
+                  {editingEpisode.thumbnail ? (
+                    <img
+                      src={editingEpisode.thumbnail}
+                      alt={`Miniatura Episodio ${editingEpisode.number}`}
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="text-center p-2">
+                      <ImageIcon className="h-6 w-6 text-emerald-600/50 mx-auto mb-1" />
+                      <span className="text-[9px] font-mono text-neutral-500 block leading-tight">Sin miniatura individual</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div className="flex-1 w-full space-y-2">
+                  <p className="text-xs text-neutral-300 font-sans">
+                    {editingEpisode.thumbnail
+                      ? 'Tiene una miniatura personalizada para la lista y reproductor.'
+                      : 'Puedes subir una miniatura individual o ingresar una URL. Si no agregas una, usará la del anime.'}
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleTriggerThumbUpload}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/60 text-emerald-200 text-xs font-mono font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      <span>Subir Miniatura</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUrlModalTarget('thumbnail');
+                        setShowUrlModal(true);
+                        setTempImageUrl(editingEpisode.thumbnail || '');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-[#0c1815] hover:bg-[#10241f] border border-emerald-800/40 text-neutral-300 hover:text-white text-xs font-mono flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <LinkIcon className="h-3.5 w-3.5" />
+                      <span>Ingresar URL</span>
+                    </button>
+
+                    {editingEpisode.thumbnail && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingEpisode(prev => prev ? { ...prev, thumbnail: undefined } : null)}
+                        className="px-2.5 py-1.5 rounded-lg border border-red-900/50 hover:bg-red-950/40 text-red-400 text-xs font-mono flex items-center gap-1.5 cursor-pointer transition-colors"
+                        title="Quitar miniatura individual"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        <span>Quitar Miniatura</span>
                       </button>
                     )}
                   </div>

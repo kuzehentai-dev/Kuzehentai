@@ -270,47 +270,7 @@ function FilterModal({
                 </div>
               </div>
 
-              {/* 3. ESTADOS */}
-              <div>
-                <h3 className="font-sans text-[11px] font-medium text-neutral-400 uppercase tracking-widest mb-2.5">
-                  ESTADOS
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onSelectStatus('')}
-                    className={`px-3.5 py-1.5 text-xs rounded-lg border transition-all cursor-pointer font-sans ${
-                      selectedStatus === ''
-                        ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium'
-                        : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
-                    }`}
-                  >
-                    Todos
-                  </button>
-                  {STATUS_OPTIONS.map(opt => {
-                    const isSelected = selectedStatus === opt.id || (opt.id === 'Próximamente' && selectedStatus === 'Emisión');
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => onSelectStatus(isSelected ? '' : opt.id)}
-                        className={`px-3 py-1.5 text-xs rounded-lg border transition-all cursor-pointer font-sans flex items-center gap-1.5 ${
-                          isSelected
-                            ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium'
-                            : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
-                        }`}
-                      >
-                        {opt.id === 'Próximamente' && !isSelected && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.85)] shrink-0 animate-pulse" />
-                        )}
-                        <span>{opt.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 4. GÉNEROS */}
+              {/* 3. GÉNEROS */}
               {genres.length > 0 && (
                 <div>
                   <div className="flex items-center justify-between mb-2.5">
