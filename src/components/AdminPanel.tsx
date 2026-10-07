@@ -1478,45 +1478,13 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
     reader.onload = (e) => {
       const result = e.target?.result as string;
       if (result) {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let w = img.width;
-          let h = img.height;
-          const maxW = 480;
-          const maxH = 270;
-          if (w > maxW || h > maxH) {
-            const ratio = Math.min(maxW / w, maxH / h);
-            w = Math.round(w * ratio);
-            h = Math.round(h * ratio);
-          }
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          let compressed = result;
-          if (ctx) {
-            ctx.drawImage(img, 0, 0, w, h);
-            try {
-              compressed = canvas.toDataURL('image/webp', 0.82);
-            } catch {
-              compressed = canvas.toDataURL('image/jpeg', 0.82);
-            }
-          }
-          setAnimeEpisodes(prev => {
-            const updated = [...prev];
-            updated[index] = { ...updated[index], coverImage: compressed };
-            return updated;
-          });
-          showNotification(`Portada lista para el Episodio ${animeEpisodes[index]?.number || (index + 1)}`, 'success');
-        };
-        img.onerror = () => {
-          setAnimeEpisodes(prev => {
-            const updated = [...prev];
-            updated[index] = { ...updated[index], coverImage: result };
-            return updated;
-          });
-        };
-        img.src = result;
+        // Sin optimización: se conserva la imagen original sin comprimir ni redimensionar
+        setAnimeEpisodes(prev => {
+          const updated = [...prev];
+          updated[index] = { ...updated[index], coverImage: result };
+          return updated;
+        });
+        showNotification(`Portada lista para el Episodio ${animeEpisodes[index]?.number || (index + 1)}`, 'success');
       }
     };
     reader.readAsDataURL(file);
@@ -1528,45 +1496,13 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
     reader.onload = (e) => {
       const result = e.target?.result as string;
       if (result) {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let w = img.width;
-          let h = img.height;
-          const maxW = 480;
-          const maxH = 270;
-          if (w > maxW || h > maxH) {
-            const ratio = Math.min(maxW / w, maxH / h);
-            w = Math.round(w * ratio);
-            h = Math.round(h * ratio);
-          }
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          let compressed = result;
-          if (ctx) {
-            ctx.drawImage(img, 0, 0, w, h);
-            try {
-              compressed = canvas.toDataURL('image/webp', 0.82);
-            } catch {
-              compressed = canvas.toDataURL('image/jpeg', 0.82);
-            }
-          }
-          setAnimeEpisodes(prev => {
-            const updated = [...prev];
-            updated[index] = { ...updated[index], thumbnail: compressed };
-            return updated;
-          });
-          showNotification(`Miniatura lista para el Episodio ${animeEpisodes[index]?.number || (index + 1)}`, 'success');
-        };
-        img.onerror = () => {
-          setAnimeEpisodes(prev => {
-            const updated = [...prev];
-            updated[index] = { ...updated[index], thumbnail: result };
-            return updated;
-          });
-        };
-        img.src = result;
+        // Sin optimización: se conserva la imagen original sin comprimir ni redimensionar
+        setAnimeEpisodes(prev => {
+          const updated = [...prev];
+          updated[index] = { ...updated[index], thumbnail: result };
+          return updated;
+        });
+        showNotification(`Miniatura lista para el Episodio ${animeEpisodes[index]?.number || (index + 1)}`, 'success');
       }
     };
     reader.readAsDataURL(file);

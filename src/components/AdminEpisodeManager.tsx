@@ -25,36 +25,9 @@ interface AdminEpisodeManagerProps {
   showNotification: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-// Compresión limpia para portadas de episodios (máximo ~35KB)
-const compressEpisodeCover = (base64Str: string, maxWidth = 480, maxHeight = 270): Promise<string> => {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      let w = img.width;
-      let h = img.height;
-      if (w > maxWidth || h > maxHeight) {
-        const ratio = Math.min(maxWidth / w, maxHeight / h);
-        w = Math.round(w * ratio);
-        h = Math.round(h * ratio);
-      }
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(img, 0, 0, w, h);
-        try {
-          resolve(canvas.toDataURL('image/webp', 0.82));
-        } catch {
-          resolve(canvas.toDataURL('image/jpeg', 0.82));
-        }
-      } else {
-        resolve(base64Str);
-      }
-    };
-    img.onerror = () => resolve(base64Str);
-    img.src = base64Str;
-  });
+// Sin optimización/compresión: se conserva la imagen 100% original en su tamaño completo
+const compressEpisodeCover = (base64Str: string): Promise<string> => {
+  return Promise.resolve(base64Str);
 };
 
 export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({

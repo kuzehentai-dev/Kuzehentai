@@ -649,17 +649,6 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                 <div className="absolute inset-0 z-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-pulse pointer-events-none" />
               )}
               <div className="absolute inset-0 z-20 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none" />
-
-              {/* Status Badge Overlay on Poster */}
-              <div className="absolute top-2.5 left-2.5 z-30">
-                <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[9.5px] font-sans font-bold tracking-tight shadow-md backdrop-blur-md border ${
-                  isEmision
-                    ? 'bg-emerald-950/85 text-emerald-300 border-emerald-500/50 shadow-emerald-950/50'
-                    : 'bg-neutral-950/85 text-neutral-300 border-neutral-700/50 shadow-black/50'
-                }`}>
-                  {statusLabel}
-                </span>
-              </div>
             </div>
           </div>
 
@@ -725,9 +714,9 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                 </div>
               )}
 
-              {/* Status Badge - Después del año, más pequeña, verde en emisión, sin punto parpadeante */}
-              <div className="shrink-0">
-                <span className={`h-5 sm:h-5.5 px-1.5 sm:px-2 rounded-md text-[9px] sm:text-[10px] font-sans font-bold tracking-tight border inline-flex items-center justify-center leading-none shadow-sm ${
+              {/* Status Badge - Después del año, más pequeña, verde en emisión, alineada perfectamente */}
+              <div className="shrink-0 flex items-center -translate-y-0.5">
+                <span className={`h-5 px-1.5 sm:px-2 rounded-md text-[9px] sm:text-[10px] font-sans font-bold tracking-tight border inline-flex items-center justify-center leading-none shadow-sm ${
                   isEmision 
                     ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10' 
                     : 'bg-neutral-800/70 text-neutral-300 border-neutral-700/50 shadow-sm'
