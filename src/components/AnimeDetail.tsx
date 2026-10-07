@@ -882,7 +882,7 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                             alt={`Episodio ${ep.number}`}
                             loading="eager"
                             decoding="async"
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                             onError={(e) => {
                               e.currentTarget.src = getFallbackSvg(anime.name);
                             }}
@@ -1177,7 +1177,7 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                                     <img
                                       src={epCover}
                                       alt={`Episodio ${ep.number}`}
-                                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                                      className="w-full h-full object-cover"
                                       onError={(e) => {
                                         e.currentTarget.src = getFallbackSvg(anime.name);
                                       }}

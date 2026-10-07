@@ -33,7 +33,7 @@ import AuthModal from './components/AuthModal';
 import UserProfileModal from './components/UserProfileModal';
 
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
-import { SmartAnimeCover, processImageSrc, globalImageCache, preloadAllAnimes, preloadAnimeCover } from './utils/imageFallback';
+import { SmartAnimeCover, processImageSrc, globalImageCache, preloadAllAnimes, preloadAnimeCover, getFallbackSvg } from './utils/imageFallback';
 import { normalizeEpisodesList } from './utils/episodeUtils';
 import { getAnimeRatingStats } from './utils/ratingManager';
 import { 
@@ -1155,7 +1155,7 @@ export default function App() {
           anime,
           episodeNumber: epNum,
           episodeTitle: ep.title || ep.name,
-          coverImage: ep.coverImage || ep.thumbnail,
+          coverImage: ep.thumbnail || ep.coverImage || anime.coverData || anime.image,
           timestamp: epTimestamp,
         });
       });
@@ -1479,7 +1479,14 @@ export default function App() {
       return a.originalIndex - b.originalIndex;
     });
 
-    return popularOnly.slice(0, 3).map(item => item.anime);
+    // Selecciona exactamente el Top 3 más popular (o los mejores animes si aún no hay 3 con visitas)
+    const finalTop = popularOnly.length >= 3
+      ? popularOnly
+      : (popularOnly.length > 0
+          ? [...popularOnly, ...scored.filter(s => !popularOnly.some(p => p.anime.id === s.anime.id))]
+          : scored);
+
+    return finalTop.slice(0, 3).map(item => item.anime);
   }, [animes, studios, genres, genreUsageMap]);
 
   // Render Section Selector helper
@@ -2155,9 +2162,9 @@ export default function App() {
         {/* 4. Elegant Minimalist Gallery Cards Grid */}
         {loading ? (
           displayMode === 'episodes' ? (
-            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5 sm:gap-3.5 md:gap-4">
-              {[...Array(10)].map((_, i) => (
-                <div key={i} className="aspect-[16/10] bg-[#10091d] border border-purple-900/30 rounded-xl animate-pulse flex items-center justify-center">
+            <div className="grid grid-cols-2 gap-2 sm:gap-2.5">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="aspect-video bg-[#10091d] border border-purple-900/30 rounded-xl animate-pulse flex items-center justify-center">
                   <span className="font-mono text-[9px] text-neutral-600 tracking-widest">CARGANDO</span>
                 </div>
               ))}
@@ -2193,18 +2200,49 @@ export default function App() {
             </div>
           ) : (
             <div className="space-y-4 touch-pan-y">
-              <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-0.5 sm:gap-1">
-                {recentEpisodes.map((item, idx) => (
-                  <GalleryCard
+              <div className="grid grid-cols-2 gap-2 sm:gap-2.5">
+                {recentEpisodes.map((item) => (
+                  <div
                     key={item.id}
-                    anime={item.anime}
-                    studios={studios}
-                    index={idx}
-                    isNewEpisodesMode={true}
-                    episodeNumber={item.episodeNumber}
-                    episodeCoverImage={item.coverImage}
                     onClick={() => navigateTo('detail', item.anime.id, item.episodeNumber)}
-                  />
+                    className="group relative aspect-video w-full rounded-xl overflow-hidden cursor-pointer transition-all duration-200 shadow-md select-none active:scale-[0.98] hover:opacity-95 outline-none border-0"
+                  >
+                    {/* Episode Thumbnail */}
+                    {item.coverImage ? (
+                      <img
+                        src={item.coverImage}
+                        alt={`${item.anime.name} - Ep ${item.episodeNumber}`}
+                        loading="eager"
+                        decoding="async"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          e.currentTarget.src = getFallbackSvg(item.anime.name);
+                        }}
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-[#150a24] flex items-center justify-center">
+                        <Film className="h-6 w-6 text-purple-400/40" />
+                      </div>
+                    )}
+
+                    {/* Subtle dark gradient overlay */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/20 pointer-events-none" />
+
+                    {/* Compact, rounded and uniform EP badge */}
+                    <div className="absolute top-1.5 left-1.5 h-4.5 min-w-[34px] px-1.5 rounded-full bg-black/80 backdrop-blur-md flex items-center justify-center border border-white/10 shadow-sm z-10">
+                      <span className="font-mono text-[8.5px] sm:text-[9px] font-bold text-white tracking-tight uppercase leading-none">
+                        EP {item.episodeNumber}
+                      </span>
+                    </div>
+
+                    {/* Anime Title overlay at bottom */}
+                    <div className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-1.5 sm:p-2 pt-4 pointer-events-none">
+                      <p className="font-display text-xs sm:text-[13px] text-white font-medium truncate group-hover:text-purple-300 transition-colors leading-tight">
+                        {item.anime.name}
+                      </p>
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>

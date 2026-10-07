@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { Studio, Genre, Anime, normalizeAnimeYear } from '../types';
 import { X, RotateCcw, Check, SlidersHorizontal } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -11,19 +11,19 @@ import { motion, AnimatePresence } from 'motion/react';
 export interface FilterModalProps {
   isOpen: boolean;
   onClose: () => void;
-  studios: Studio[];
-  genres: Genre[];
-  animes: Anime[];
-  selectedStudioId: string;
-  selectedGenreIds: string[];
-  selectedYear: string;
-  selectedStatus: string;
+  studios?: Studio[];
+  genres?: Genre[];
+  animes?: Anime[];
+  selectedStudioId?: string;
+  selectedGenreIds?: string[];
+  selectedYear?: string;
+  selectedStatus?: string;
   selectedRating: string;
   sortBy: string;
-  onSelectStudio: (id: string) => void;
-  onSelectGenreIds: (ids: string[]) => void;
-  onSelectYear: (year: string) => void;
-  onSelectStatus: (status: string) => void;
+  onSelectStudio?: (id: string) => void;
+  onSelectGenreIds?: (ids: string[]) => void;
+  onSelectYear?: (year: string) => void;
+  onSelectStatus?: (status: string) => void;
   onSelectRating: (rating: string) => void;
   onSelectSortBy: (sortBy: string) => void;
   onResetFilters: () => void;
@@ -50,20 +50,21 @@ const RATING_OPTIONS = [
 ];
 
 const STATUS_OPTIONS = [
-  { id: 'Emisión', label: 'Emisión' },
+  { id: '', label: 'Todos' },
+  { id: 'Emisión', label: 'En emisión' },
   { id: 'Finalizado', label: 'Finalizado' },
 ];
 
 function FilterModal({
   isOpen,
   onClose,
-  studios,
-  genres,
+  studios = [],
+  genres = [],
   animes = [],
-  selectedStudioId,
-  selectedGenreIds,
-  selectedYear,
-  selectedStatus,
+  selectedStudioId = '',
+  selectedGenreIds = [],
+  selectedYear = '',
+  selectedStatus = '',
   selectedRating,
   sortBy,
   onSelectStudio,
@@ -73,95 +74,35 @@ function FilterModal({
   onSelectRating,
   onSelectSortBy,
   onResetFilters,
-  onOpenStudio,
 }: FilterModalProps) {
-  // Precalculate studio and genre counts
-  const studioCounts = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (let i = 0; i < animes.length; i++) {
-      const sIds = (animes[i].studioIds && animes[i].studioIds.length > 0)
-        ? animes[i].studioIds!
-        : (animes[i].studioId ? [animes[i].studioId] : []);
-      for (let j = 0; j < sIds.length; j++) {
-        const sid = sIds[j];
-        if (sid) map[sid] = (map[sid] || 0) + 1;
-      }
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Cada vez que se abre el modal, se posiciona en el inicio (hasta Calificaciones)
+  useEffect(() => {
+    if (isOpen && scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
     }
-    return map;
-  }, [animes]);
+  }, [isOpen]);
 
-  const genreCounts = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (let i = 0; i < animes.length; i++) {
-      const gids = animes[i].genreIds;
-      if (gids && Array.isArray(gids)) {
-        for (let j = 0; j < gids.length; j++) {
-          map[gids[j]] = (map[gids[j]] || 0) + 1;
-        }
-      }
-    }
-    return map;
-  }, [animes]);
-
-  const sortedStudios = useMemo(() => {
-    return [...studios].sort((a, b) => {
-      const countA = studioCounts[a.id] || 0;
-      const countB = studioCounts[b.id] || 0;
-      if (countB !== countA) return countB - countA;
-      return a.name.localeCompare(b.name);
-    });
-  }, [studios, studioCounts]);
-
-  const sortedGenres = useMemo(() => {
-    return [...genres].sort((a, b) => {
-      const countA = genreCounts[a.id] || 0;
-      const countB = genreCounts[b.id] || 0;
-      if (countB !== countA) return countB - countA;
-      return a.name.localeCompare(b.name);
-    });
-  }, [genres, genreCounts]);
-
-  // Extract unique years from animes
   const availableYears = useMemo(() => {
-    const yearSet = new Set<string>();
-    animes.forEach(a => {
-      const y = normalizeAnimeYear(a.year);
-      if (y) {
-        yearSet.add(y);
-      }
+    const yearsSet = new Set<string>();
+    animes.forEach(anime => {
+      const y = normalizeAnimeYear(anime.year);
+      if (y) yearsSet.add(y);
     });
-    return Array.from(yearSet).sort((a, b) => b.localeCompare(a));
+    return Array.from(yearsSet).sort((a, b) => b.localeCompare(a));
   }, [animes]);
 
-  const statusCounts = useMemo(() => {
-    let emision = 0;
-    let finalizado = 0;
-    for (let i = 0; i < animes.length; i++) {
-      const s = (animes[i].status || 'Finalizado').toLowerCase();
-      if (s.includes('emisi') || s === 'próximamente') {
-        emision++;
-      } else {
-        finalizado++;
-      }
-    }
-    return { 'Emisión': emision, 'Finalizado': finalizado };
-  }, [animes]);
-
-  const handleToggleGenre = (genreId: string) => {
-    if (selectedGenreIds.includes(genreId)) {
-      onSelectGenreIds(selectedGenreIds.filter(id => id !== genreId));
-    } else {
-      onSelectGenreIds([...selectedGenreIds, genreId]);
-    }
-  };
+  const extraActiveCount =
+    (selectedStatus ? 1 : 0) +
+    (selectedGenreIds.length > 0 ? selectedGenreIds.length : 0) +
+    (selectedYear ? 1 : 0) +
+    (selectedStudioId ? 1 : 0);
 
   const hasActiveFilters =
-    selectedStudioId !== '' ||
-    selectedGenreIds.length > 0 ||
-    selectedYear !== '' ||
-    selectedStatus !== '' ||
     selectedRating !== '' ||
-    sortBy !== 'recientes';
+    sortBy !== 'recientes' ||
+    extraActiveCount > 0;
 
   return (
     <AnimatePresence>
@@ -177,13 +118,13 @@ function FilterModal({
             className="fixed inset-0 bg-black/85 backdrop-blur-sm cursor-pointer"
           />
 
-          {/* Modal Card - Matches Screenshot Perfectly */}
+          {/* Modal Card */}
           <motion.div
             initial={{ opacity: 0, y: 16, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 16, scale: 0.96 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="relative w-full max-w-[420px] bg-[#110822] border border-[#2e174e] rounded-2xl shadow-2xl flex flex-col overflow-hidden max-h-[88vh] z-10"
+            className="relative w-full max-w-[460px] bg-[#110822] border border-[#2e174e] rounded-2xl shadow-2xl flex flex-col overflow-hidden max-h-[82vh] sm:max-h-[85vh] z-10"
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3.5 border-b border-[#26133f] bg-[#110822] shrink-0">
@@ -216,8 +157,11 @@ function FilterModal({
               </div>
             </div>
 
-            {/* Scrollable Content Body */}
-            <div className="flex-1 overflow-y-auto px-4 py-3.5 space-y-5 scrollbar-thin scrollbar-thumb-purple-900/40">
+            {/* Content Body - Deslizable con todos los apartados */}
+            <div
+              ref={scrollRef}
+              className="flex-1 overflow-y-auto px-4 py-3.5 space-y-5 scrollbar-thin scrollbar-thumb-purple-900/40 overscroll-contain"
+            >
               {/* 1. ORDENAR POR */}
               <div>
                 <h3 className="font-sans text-[11px] font-medium text-neutral-400 uppercase tracking-widest mb-2.5">
@@ -284,41 +228,28 @@ function FilterModal({
                 </div>
               </div>
 
-              {/* 3. ESTADO */}
+              {/* 3. ESTADOS */}
               <div>
                 <h3 className="font-sans text-[11px] font-medium text-neutral-400 uppercase tracking-widest mb-2.5">
                   ESTADO
                 </h3>
                 <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onSelectStatus('')}
-                    className={`px-3 py-1.5 text-xs rounded-lg border transition-all cursor-pointer font-sans ${
-                      selectedStatus === ''
-                        ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium shadow-sm'
-                        : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
-                    }`}
-                  >
-                    Todos
-                  </button>
                   {STATUS_OPTIONS.map(opt => {
-                    const isSelected = selectedStatus === opt.id || (opt.id === 'Emisión' && selectedStatus === 'Próximamente');
-                    const count = statusCounts[opt.id as 'Emisión' | 'Finalizado'] || 0;
+                    const isSelected = selectedStatus === opt.id;
                     return (
                       <button
                         key={opt.id}
                         type="button"
-                        onClick={() => onSelectStatus(isSelected ? '' : opt.id)}
-                        className={`px-2.5 py-1.5 text-xs rounded-lg border transition-all cursor-pointer font-sans flex items-center gap-1.5 ${
+                        onClick={() => onSelectStatus?.(opt.id)}
+                        className={`px-3 py-1.5 text-xs rounded-lg border transition-all cursor-pointer font-sans flex items-center gap-1.5 ${
                           isSelected
                             ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium shadow-sm'
                             : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
                         }`}
                       >
-                        {isSelected && <Check className="h-3 w-3 shrink-0 stroke-[2.5]" />}
                         <span>{opt.label}</span>
-                        {count > 0 && (
-                          <span className="text-[10px] opacity-60 font-mono">({count})</span>
+                        {isSelected && (
+                          <Check className="h-3 w-3 text-white shrink-0 stroke-[2.5]" />
                         )}
                       </button>
                     );
@@ -336,32 +267,48 @@ function FilterModal({
                     {selectedGenreIds.length > 0 && (
                       <button
                         type="button"
-                        onClick={() => onSelectGenreIds([])}
-                        className="text-[11px] text-purple-300 hover:underline cursor-pointer"
+                        onClick={() => onSelectGenreIds?.([])}
+                        className="text-[10px] text-purple-400 hover:text-purple-300 underline cursor-pointer"
                       >
-                        Desmarcar ({selectedGenreIds.length})
+                        Limpiar géneros
                       </button>
                     )}
                   </div>
-                  <div className="flex flex-wrap gap-2 max-h-44 overflow-y-auto pr-1">
-                    {sortedGenres.map(gn => {
-                      const count = genreCounts[gn.id] || 0;
-                      const isSelected = selectedGenreIds.includes(gn.id);
+                  <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-1 scrollbar-thin scrollbar-thumb-purple-900/40">
+                    <button
+                      type="button"
+                      onClick={() => onSelectGenreIds?.([])}
+                      className={`px-2.5 py-1 text-xs rounded-lg border transition-all cursor-pointer font-sans ${
+                        selectedGenreIds.length === 0
+                          ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium shadow-sm'
+                          : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
+                      }`}
+                    >
+                      Todos
+                    </button>
+                    {genres.map(genre => {
+                      const isSelected = selectedGenreIds.includes(genre.id);
                       return (
                         <button
-                          key={gn.id}
+                          key={genre.id}
                           type="button"
-                          onClick={() => handleToggleGenre(gn.id)}
-                          className={`px-2.5 py-1.5 text-xs rounded-lg border transition-all cursor-pointer font-sans flex items-center gap-1.5 ${
+                          onClick={() => {
+                            if (!onSelectGenreIds) return;
+                            if (isSelected) {
+                              onSelectGenreIds(selectedGenreIds.filter(id => id !== genre.id));
+                            } else {
+                              onSelectGenreIds([...selectedGenreIds, genre.id]);
+                            }
+                          }}
+                          className={`px-2.5 py-1 text-xs rounded-lg border transition-all cursor-pointer font-sans flex items-center gap-1 ${
                             isSelected
-                              ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium'
+                              ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium shadow-sm'
                               : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
                           }`}
                         >
-                          {isSelected && <Check className="h-3 w-3 shrink-0" />}
-                          <span>{gn.name}</span>
-                          {count > 0 && (
-                            <span className="text-[10px] opacity-60 font-mono">({count})</span>
+                          <span>{genre.name}</span>
+                          {isSelected && (
+                            <Check className="h-3 w-3 text-white shrink-0 stroke-[2.5]" />
                           )}
                         </button>
                       );
@@ -370,38 +317,41 @@ function FilterModal({
                 </div>
               )}
 
-              {/* 5. AÑOS */}
+              {/* 5. AÑOS DE LANZAMIENTO */}
               {availableYears.length > 0 && (
                 <div>
                   <h3 className="font-sans text-[11px] font-medium text-neutral-400 uppercase tracking-widest mb-2.5">
                     AÑOS DE LANZAMIENTO
                   </h3>
-                  <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto pr-1">
+                  <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1 scrollbar-thin scrollbar-thumb-purple-900/40">
                     <button
                       type="button"
-                      onClick={() => onSelectYear('')}
-                      className={`px-2.5 py-1.5 text-xs rounded-lg border transition-all cursor-pointer font-sans ${
-                        selectedYear === ''
-                          ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium'
+                      onClick={() => onSelectYear?.('')}
+                      className={`px-3 py-1 text-xs rounded-lg border transition-all cursor-pointer font-sans ${
+                        !selectedYear
+                          ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium shadow-sm'
                           : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
                       }`}
                     >
-                      Todos los años
+                      Todos
                     </button>
-                    {availableYears.map(yr => (
-                      <button
-                        key={yr}
-                        type="button"
-                        onClick={() => onSelectYear(selectedYear === yr ? '' : yr)}
-                        className={`px-2.5 py-1.5 text-xs rounded-lg border transition-all cursor-pointer font-sans ${
-                          selectedYear === yr
-                            ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium'
-                            : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
-                        }`}
-                      >
-                        {yr}
-                      </button>
-                    ))}
+                    {availableYears.map(year => {
+                      const isSelected = selectedYear === year;
+                      return (
+                        <button
+                          key={year}
+                          type="button"
+                          onClick={() => onSelectYear?.(isSelected ? '' : year)}
+                          className={`px-2.5 py-1 text-xs rounded-lg border transition-all cursor-pointer font-sans ${
+                            isSelected
+                              ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium shadow-sm'
+                              : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
+                          }`}
+                        >
+                          {year}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -412,47 +362,46 @@ function FilterModal({
                   <h3 className="font-sans text-[11px] font-medium text-neutral-400 uppercase tracking-widest mb-2.5">
                     ESTUDIOS
                   </h3>
-                  <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto pr-1">
+                  <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1 scrollbar-thin scrollbar-thumb-purple-900/40">
                     <button
                       type="button"
-                      onClick={() => onSelectStudio('')}
-                      className={`px-2.5 py-1.5 text-xs rounded-lg border transition-all cursor-pointer font-sans ${
-                        selectedStudioId === ''
-                          ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium'
+                      onClick={() => onSelectStudio?.('')}
+                      className={`px-3 py-1 text-xs rounded-lg border transition-all cursor-pointer font-sans ${
+                        !selectedStudioId
+                          ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium shadow-sm'
                           : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
                       }`}
                     >
-                      Todos los estudios
+                      Todos
                     </button>
-                    {sortedStudios.map(st => {
-                      const count = studioCounts[st.id] || 0;
+                    {studios.map(studio => {
+                      const isSelected = selectedStudioId === studio.id;
                       return (
-                        <div key={st.id} className="inline-flex items-center rounded-lg border border-[#281644] bg-[#160c29] overflow-hidden">
-                          <button
-                            type="button"
-                            onClick={() => onSelectStudio(selectedStudioId === st.id ? '' : st.id)}
-                            className={`px-2.5 py-1.5 text-xs transition-all cursor-pointer font-sans flex items-center gap-1.5 ${
-                              selectedStudioId === st.id
-                                ? 'bg-[#a855f7] text-white font-medium'
-                                : 'text-neutral-300 hover:text-white hover:bg-white/5'
-                            }`}
-                          >
-                            <span>{st.name}</span>
-                            {count > 0 && (
-                              <span className="text-[10px] opacity-60 font-mono">({count})</span>
-                            )}
-                          </button>
-                          {onOpenStudio && (
-                            <button
-                              type="button"
-                              onClick={() => onOpenStudio(st)}
-                              title={`Abrir apartado del estudio ${st.name}`}
-                              className="px-2 py-1.5 text-purple-400 hover:text-white hover:bg-purple-900/50 border-l border-[#281644] text-[10px] cursor-pointer"
-                            >
-                              Catálogo
-                            </button>
+                        <button
+                          key={studio.id}
+                          type="button"
+                          onClick={() => onSelectStudio?.(isSelected ? '' : studio.id)}
+                          className={`px-2.5 py-1 text-xs rounded-lg border transition-all cursor-pointer font-sans flex items-center gap-1.5 ${
+                            isSelected
+                              ? 'bg-[#a855f7] border-[#a855f7] text-white font-medium shadow-sm'
+                              : 'border-[#281644] text-neutral-300 bg-[#160c29] hover:border-purple-500/40 hover:text-white'
+                          }`}
+                        >
+                          {studio.image && (
+                            <img
+                              src={studio.image}
+                              alt=""
+                              className="w-3.5 h-3.5 rounded-full object-cover shrink-0"
+                              onError={e => {
+                                (e.target as HTMLElement).style.display = 'none';
+                              }}
+                            />
                           )}
-                        </div>
+                          <span>{studio.name}</span>
+                          {isSelected && (
+                            <Check className="h-3 w-3 text-white shrink-0 stroke-[2.5]" />
+                          )}
+                        </button>
                       );
                     })}
                   </div>
@@ -460,7 +409,7 @@ function FilterModal({
               )}
             </div>
 
-            {/* Sticky Bottom Button - Exact Match with Screenshot */}
+            {/* Sticky Bottom Button */}
             <div className="p-3.5 sm:p-4 bg-[#110822] border-t border-[#26133f] shrink-0">
               <button
                 type="button"
