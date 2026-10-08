@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Bookmark, LogOut, Check, User as UserIcon, Edit3, AlertCircle, Palette, Moon, Sparkles, Eye } from 'lucide-react';
+import { X, Bookmark, LogOut, Check, User as UserIcon, Edit3, AlertCircle, Palette, Moon, Sparkles, MessageSquareWarning, ChevronRight } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { auth, updateProfile, db, doc, setDoc, serverTimestamp } from '../lib/firebase';
 import { isUsernameTaken, reserveUsername } from '../lib/usernameService';
@@ -15,6 +15,7 @@ interface UserProfileModalProps {
   watchedCount?: number;
   onOpenMyList: () => void;
   onOpenWatched?: () => void;
+  onOpenReportModal?: () => void;
   onLogout: () => Promise<void>;
   onUserUpdated?: () => void;
 }
@@ -27,6 +28,7 @@ export default function UserProfileModal({
   watchedCount = 0,
   onOpenMyList,
   onOpenWatched,
+  onOpenReportModal,
   onLogout,
   onUserUpdated
 }: UserProfileModalProps) {
@@ -365,33 +367,31 @@ export default function UserProfileModal({
               </span>
             </button>
 
-            {/* Section: Animes Vistos debajo de Mi Lista */}
+            {/* Botón: Reporte problema o sugerencias */}
             <button
               type="button"
               onClick={() => {
                 onClose();
-                if (onOpenWatched) {
-                  onOpenWatched();
+                if (onOpenReportModal) {
+                  onOpenReportModal();
                 }
               }}
-              className="w-full p-2.5 bg-[#180e26] hover:bg-[#221337] border border-purple-900/50 hover:border-emerald-600/60 rounded-xl transition-all duration-200 flex items-center justify-between cursor-pointer group"
+              className="w-full p-2.5 bg-[#180e26] hover:bg-[#221337] border border-purple-900/50 hover:border-amber-500/60 rounded-xl transition-all duration-200 flex items-center justify-between cursor-pointer group"
             >
               <div className="flex items-center gap-2.5">
-                <div className="p-1.5 rounded-lg bg-emerald-950/60 text-emerald-400 group-hover:bg-emerald-500 group-hover:text-black transition-colors">
-                  <Eye className="h-4 w-4" />
+                <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 group-hover:bg-amber-500 group-hover:text-black transition-colors">
+                  <MessageSquareWarning className="h-4 w-4" />
                 </div>
                 <div className="text-left">
-                  <p className="text-xs font-semibold text-white group-hover:text-emerald-300 transition-colors">
-                    Animes Vistos
+                  <p className="text-xs font-semibold text-white group-hover:text-amber-300 transition-colors">
+                    Reporte problema o sugerencias
                   </p>
                   <p className="text-[10px] text-neutral-400 font-mono">
-                    Historial de animes marcados como vistos
+                    Reporta fallos o sugiere animes y funciones
                   </p>
                 </div>
               </div>
-              <span className="px-2 py-0.5 bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 rounded-full text-[10px] font-mono font-bold">
-                {watchedCount}
-              </span>
+              <ChevronRight className="h-4 w-4 text-neutral-500 group-hover:text-amber-400 group-hover:translate-x-0.5 transition-all" />
             </button>
           </div>
         </motion.div>

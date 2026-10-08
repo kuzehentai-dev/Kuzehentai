@@ -19,7 +19,9 @@ import {
   getDoc, 
   setDoc, 
   deleteDoc,
-  writeBatch
+  writeBatch,
+  addDoc,
+  serverTimestamp
 } from 'firebase/firestore';
 export interface Studio {
   id: string;
@@ -2805,6 +2807,351 @@ app.post('/api/admin/cleanup-inactive-users', authRequired, async (req, res) => 
     res.json({ success: true, deletedCount, message: `Se han eliminado ${deletedCount} cuentas inactivas por más de 3 meses.` });
   } catch (err) {
     res.status(500).json({ error: 'Error al ejecutar limpieza de usuarios inactivos' });
+  }
+});
+
+// --- Persistent Telegram Reports & Replies Store (Zero Firebase Cost) ---
+interface StoredTelegramReport {
+  telegramMessageId?: number;
+  userId: string;
+  userName: string;
+  userEmail?: string;
+  message: string;
+  timestamp: number;
+}
+
+interface TelegramReplyMessage {
+  id: string;
+  sender: 'admin';
+  text: string;
+  timestamp: string;
+  createdAt: number;
+}
+
+interface TelegramStoreData {
+  lastUpdateId: number;
+  reports: StoredTelegramReport[];
+  replies: Record<string, TelegramReplyMessage[]>;
+  lastReporter?: {
+    userId: string;
+    userName: string;
+    userEmail?: string;
+    timestamp: number;
+  };
+}
+
+const TELEGRAM_STORE_FILE = path.join(process.cwd(), 'telegram_reports_store.json');
+
+function loadTelegramStore(): TelegramStoreData {
+  try {
+    if (fs.existsSync(TELEGRAM_STORE_FILE)) {
+      const content = fs.readFileSync(TELEGRAM_STORE_FILE, 'utf-8');
+      const data = JSON.parse(content);
+      return {
+        lastUpdateId: typeof data.lastUpdateId === 'number' ? data.lastUpdateId : 0,
+        reports: Array.isArray(data.reports) ? data.reports : [],
+        replies: (typeof data.replies === 'object' && data.replies !== null) ? data.replies : {},
+        lastReporter: data.lastReporter || undefined
+      };
+    }
+  } catch (e) {
+    console.warn('[Telegram Store] Could not read store file:', e);
+  }
+  return { lastUpdateId: 0, reports: [], replies: {} };
+}
+
+function saveTelegramStore(data: TelegramStoreData) {
+  try {
+    if (data.reports.length > 200) {
+      data.reports = data.reports.slice(-200);
+    }
+    for (const key of Object.keys(data.replies)) {
+      if (data.replies[key].length > 50) {
+        data.replies[key] = data.replies[key].slice(-50);
+      }
+    }
+    fs.writeFileSync(TELEGRAM_STORE_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (e) {
+    console.warn('[Telegram Store] Could not write store file:', e);
+  }
+}
+
+let isTelegramPollingActive = false;
+
+// Poll Telegram for replies to reports
+async function pollTelegramReplies() {
+  if (isTelegramPollingActive) return;
+  const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8870602337:AAHM2VP4BPE1EHxgJFzjHyFu6fxyu71Cyd4';
+  if (!TELEGRAM_BOT_TOKEN) return;
+
+  isTelegramPollingActive = true;
+  try {
+    const store = loadTelegramStore();
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=${store.lastUpdateId + 1}&timeout=5&allowed_updates=["message"]`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      isTelegramPollingActive = false;
+      return;
+    }
+
+    const data = await res.json() as any;
+    if (data?.ok && Array.isArray(data.result) && data.result.length > 0) {
+      let storeModified = false;
+
+      for (const update of data.result) {
+        if (update.update_id) {
+          store.lastUpdateId = Math.max(store.lastUpdateId, update.update_id);
+          storeModified = true;
+        }
+
+        const msg = update.message;
+        if (!msg || !msg.text) continue;
+        if (msg.from && msg.from.is_bot) continue;
+
+        const incomingText = msg.text.trim();
+        if (incomingText.startsWith('/start')) {
+          try {
+            await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: msg.chat.id,
+                text: `🤖 *Bot de Kuze Hentai Conectado*\n\nCuando los usuarios envíen reportes o sugerencias desde la web, te llegarán aquí.\n\nPara responderles, desliza sobre el reporte (Reply) o escribe tu mensaje aquí directamente.`,
+                parse_mode: 'Markdown'
+              })
+            });
+          } catch {}
+          continue;
+        }
+
+        // 1. Determine target user
+        let targetUserId: string | null = null;
+        let targetUserName: string = 'Usuario';
+        let targetUserEmail: string | undefined = undefined;
+
+        const replyTo = msg.reply_to_message;
+        if (replyTo) {
+          // Check by Telegram message ID in store
+          if (replyTo.message_id) {
+            const found = store.reports.find(r => r.telegramMessageId === replyTo.message_id);
+            if (found) {
+              targetUserId = found.userId;
+              targetUserName = found.userName;
+              targetUserEmail = found.userEmail;
+            }
+          }
+
+          // If not matched by ID, parse from text of quoted message
+          if (!targetUserId && replyTo.text) {
+            const idMatch = replyTo.text.match(/(?:ID Usuario|userId):\s*[`*]?([a-zA-Z0-9_\-\.\@]+)/i);
+            if (idMatch && idMatch[1]) {
+              targetUserId = idMatch[1].trim();
+            }
+
+            const nameMatch = replyTo.text.match(/(?:Usuario|userName):\s*([^\n\r*`]+)/i);
+            if (nameMatch && nameMatch[1]) {
+              targetUserName = nameMatch[1].trim();
+            }
+
+            const emailMatch = replyTo.text.match(/(?:Correo|email):\s*([a-zA-Z0-9_\.\-\+]+@[a-zA-Z0-9\-\.]+)/i);
+            if (emailMatch && emailMatch[1]) {
+              targetUserEmail = emailMatch[1].trim();
+            }
+          }
+        }
+
+        // 2. If not replying to a specific message or couldn't parse, fall back to the most recent reporter
+        if (!targetUserId && store.lastReporter) {
+          targetUserId = store.lastReporter.userId;
+          targetUserName = store.lastReporter.userName;
+          targetUserEmail = store.lastReporter.userEmail;
+        }
+
+        // 3. Deliver reply if user identified
+        if (targetUserId) {
+          const replyObj: TelegramReplyMessage = {
+            id: 'reply-' + (msg.message_id || Date.now()),
+            sender: 'admin',
+            text: incomingText,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            createdAt: Date.now()
+          };
+
+          if (!store.replies[targetUserId]) store.replies[targetUserId] = [];
+          store.replies[targetUserId].push(replyObj);
+
+          if (targetUserEmail && targetUserEmail !== targetUserId) {
+            if (!store.replies[targetUserEmail]) store.replies[targetUserEmail] = [];
+            store.replies[targetUserEmail].push(replyObj);
+          }
+
+          storeModified = true;
+          console.log(`[Telegram Reply Delivered]: User=${targetUserName} (${targetUserId}) -> "${incomingText}"`);
+
+          // Confirmation back to Telegram so the admin KNOWS it was delivered
+          try {
+            await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: msg.chat.id,
+                reply_to_message_id: msg.message_id,
+                text: `✅ *Respuesta enviada a la web*\n👤 *Para:* ${targetUserName} (\`${targetUserId}\`)\n💬 *Mensaje:* "${incomingText}"`,
+                parse_mode: 'Markdown'
+              })
+            });
+          } catch (e) {
+            console.warn('[Telegram Confirmation Error]:', e);
+          }
+        } else {
+          // Tell admin why it couldn't be routed
+          try {
+            await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: msg.chat.id,
+                reply_to_message_id: msg.message_id,
+                text: `⚠️ *No se pudo identificar a qué usuario responder.*\nPara responder, mantén presionado el mensaje del reporte en Telegram (Reply) y escribe tu mensaje.`,
+                parse_mode: 'Markdown'
+              })
+            });
+          } catch {}
+        }
+      }
+
+      if (storeModified) {
+        saveTelegramStore(store);
+      }
+    }
+  } catch (err) {
+    // Network or transient polling error
+  } finally {
+    isTelegramPollingActive = false;
+  }
+}
+
+// Start polling Telegram every 3 seconds
+setInterval(pollTelegramReplies, 3000);
+
+// User Problem Reporting Endpoint
+app.post('/api/reports', async (req, res) => {
+  try {
+    const { userId, userName, userEmail, message, deviceInfo } = req.body;
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({ error: 'El mensaje del reporte es requerido' });
+    }
+    const reportData = {
+      userId: userId || 'anon',
+      userName: userName || 'Usuario Anónimo',
+      userEmail: userEmail || '',
+      message: message.trim(),
+      deviceInfo: deviceInfo || '',
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    };
+
+    // Save report in persistent disk store (0 bytes in Firestore)
+    const store = loadTelegramStore();
+    store.lastReporter = {
+      userId: reportData.userId,
+      userName: reportData.userName,
+      userEmail: reportData.userEmail,
+      timestamp: Date.now()
+    };
+    const reportEntry: StoredTelegramReport = {
+      userId: reportData.userId,
+      userName: reportData.userName,
+      userEmail: reportData.userEmail,
+      message: reportData.message,
+      timestamp: Date.now()
+    };
+    store.reports.push(reportEntry);
+    saveTelegramStore(store);
+
+    // Telegram configuration
+    const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8870602337:AAHM2VP4BPE1EHxgJFzjHyFu6fxyu71Cyd4';
+    const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '8401789540';
+
+    // Send instant notification directly to Telegram (0 bytes in Firestore)
+    if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
+      try {
+        const now = new Date();
+        const dateFormatted = now.toLocaleString('es-ES', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+
+        const isSuggestion = /sugerencia|sugerir|nueva funci|nuevo anime|idea/i.test(reportData.message);
+        const headerTitle = isSuggestion 
+          ? `💡 *NUEVA SUGERENCIA DE USUARIO*`
+          : `🚨 *REPORTE DE PROBLEMA O FALLO*`;
+
+        const replyGuide = `\n\n💬 _Para responderle al usuario en el chat de la web, desliza sobre este mensaje (Reply) o escribe tu respuesta aquí._`;
+
+        const telegramText = 
+          `${headerTitle}\n\n` +
+          `👤 *Usuario:* ${reportData.userName}\n` +
+          (reportData.userEmail ? `📧 *Correo:* ${reportData.userEmail}\n` : '') +
+          `🆔 *ID Usuario:* \`${reportData.userId}\`\n` +
+          `💬 *Mensaje:*\n${reportData.message}\n\n` +
+          `📅 *Fecha:* ${dateFormatted}\n` +
+          (reportData.deviceInfo ? `📱 *Dispositivo:* ${reportData.deviceInfo.slice(0, 70)}...` : '') +
+          replyGuide;
+
+        const tgRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: TELEGRAM_CHAT_ID,
+            text: telegramText,
+            parse_mode: 'Markdown'
+          })
+        });
+
+        if (tgRes.ok) {
+          const tgData = await tgRes.json() as any;
+          if (tgData?.result?.message_id) {
+            reportEntry.telegramMessageId = Number(tgData.result.message_id);
+            saveTelegramStore(store);
+          }
+        }
+      } catch (tgErr) {
+        console.warn('[Telegram Report Warning]:', tgErr);
+      }
+    }
+
+    res.json({ success: true, message: 'Reporte registrado exitosamente' });
+  } catch (err) {
+    console.error('Error handling report:', err);
+    res.status(500).json({ error: 'Error al registrar el reporte' });
+  }
+});
+
+// Endpoint to fetch admin Telegram replies for a specific user (Zero Firebase)
+app.get('/api/reports/replies', (req, res) => {
+  try {
+    const userId = (req.query.userId as string) || '';
+    const email = (req.query.email as string) || '';
+
+    const store = loadTelegramStore();
+    const userReplies = userId ? (store.replies[userId] || []) : [];
+    const emailReplies = email ? (store.replies[email] || []) : [];
+    const anonReplies = userId.startsWith('anon') ? (store.replies['anon'] || []) : [];
+
+    const all = [...userReplies, ...emailReplies, ...anonReplies];
+    const uniqueMap = new Map<string, TelegramReplyMessage>();
+    for (const r of all) {
+      uniqueMap.set(r.id, r);
+    }
+
+    const replies = Array.from(uniqueMap.values()).sort((a, b) => a.createdAt - b.createdAt);
+    res.json({ replies });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener respuestas' });
   }
 });
 

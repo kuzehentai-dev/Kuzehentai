@@ -38,6 +38,7 @@ import FilterModal from './components/FilterModal';
 import StudioDetailModal from './components/StudioDetailModal';
 import AuthModal from './components/AuthModal';
 import UserProfileModal from './components/UserProfileModal';
+import ReportIssueModal from './components/ReportIssueModal';
 
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
 import { SmartAnimeCover, processImageSrc, globalImageCache, preloadAllAnimes, preloadAnimeCover, getFallbackSvg, startPrioritizedAppLoading, prefetchAnime, prefetchCatalogPage } from './utils/imageFallback';
@@ -454,6 +455,8 @@ export default function App() {
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [myListTab, setMyListTab] = useState<'saved' | 'watched'>('saved');
   const [appTheme, setAppTheme] = useAppTheme();
 
   const handleUserUpdated = () => {
@@ -751,9 +754,11 @@ export default function App() {
       } else if (path === '/admin') {
         setCurrentPage('admin');
       } else if (path === '/mi-lista') {
+        setMyListTab('saved');
         setCurrentPage('my-list');
       } else if (path === '/vistos') {
-        setCurrentPage('watched');
+        setMyListTab('watched');
+        setCurrentPage('my-list');
       } else if (path.startsWith('/estudio/')) {
         const id = path.split('/')[2];
         const st = studios.find(s => s.id === id || s.name === decodeURIComponent(id));
@@ -907,7 +912,17 @@ export default function App() {
       setIsDetailAnimating(true);
     }
 
-    setCurrentPage(nextPage);
+    if (nextPage === 'watched') {
+      setMyListTab('watched');
+      setCurrentPage('my-list');
+    } else if (nextPage === 'my-list') {
+      if (prev !== 'my-list') {
+        setMyListTab('saved');
+      }
+      setCurrentPage('my-list');
+    } else {
+      setCurrentPage(nextPage);
+    }
     setSelectedAnimeId(animeId);
     setSelectedEpisodeNum(episodeNum);
     
@@ -1280,11 +1295,29 @@ export default function App() {
 
       if (isHorizontal && (isFastFlick || isStandardSwipe)) {
         if (currentPage === 'my-list' || currentPage === 'watched') {
-          if (deltaX > 0) {
-            try {
-              if (navigator.vibrate) navigator.vibrate(12);
-            } catch {}
-            navigateTo('home');
+          if (deltaX < 0) {
+            // Swipe Left -> switch from Mi Lista to Vistos
+            if (myListTab === 'saved') {
+              try {
+                if (navigator.vibrate) navigator.vibrate(12);
+              } catch {}
+              setMyListTab('watched');
+              window.history.replaceState(null, '', '/vistos');
+            }
+          } else if (deltaX > 0) {
+            // Swipe Right -> switch from Vistos to Mi Lista, or from Mi Lista to Galería
+            if (myListTab === 'watched') {
+              try {
+                if (navigator.vibrate) navigator.vibrate(12);
+              } catch {}
+              setMyListTab('saved');
+              window.history.replaceState(null, '', '/mi-lista');
+            } else {
+              try {
+                if (navigator.vibrate) navigator.vibrate(12);
+              } catch {}
+              navigateTo('home');
+            }
           }
           return;
         }
@@ -1836,7 +1869,7 @@ export default function App() {
             {/* 3. Main Search & Explore Gallery Area */}
             <main id="explorar" className="relative z-10 max-w-[1500px] 2xl:max-w-[1800px] 3xl:max-w-[2100px] mx-auto w-full px-1.5 sm:px-5 lg:px-7 pt-24 pb-3 sm:pb-4 space-y-4 flex-grow">
               <AnimatePresence mode="popLayout" custom={navDirection} initial={false}>
-                {currentPage === 'my-list' ? (
+                {currentPage === 'my-list' || currentPage === 'watched' ? (
                   <motion.div
                     key="my-list-view"
                     custom={navDirection}
@@ -1854,153 +1887,168 @@ export default function App() {
                     })}
                     transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
                     style={{ willChange: 'transform, opacity' }}
-                    className="space-y-6"
+                    className="space-y-5"
                   >
-                    {/* Back Button */}
-                    <button
-                      onClick={() => navigateTo('home')}
-                      className="group inline-flex items-center gap-2 font-mono text-[10px] text-neutral-400 hover:text-brand-red uppercase tracking-widest transition-colors duration-300 cursor-pointer"
-                    >
-                      <ChevronLeft className="h-4 w-4 transition-transform duration-300 group-hover:-translate-x-1" />
-                      Galería
-                    </button>
+                    {/* Top Row: Back to Galería Button & Two-tab Selector (Mi Lista / Vistos) */}
+                    <div className="flex items-center justify-between gap-3">
+                      <button
+                        onClick={() => navigateTo('home')}
+                        className="group inline-flex items-center gap-2 font-mono text-[10px] text-neutral-400 hover:text-white uppercase tracking-widest transition-colors duration-300 cursor-pointer select-none"
+                      >
+                        <ChevronLeft className="h-4 w-4 transition-transform duration-300 group-hover:-translate-x-1" />
+                        Galería
+                      </button>
 
-                    {/* Header Title & Subtitle */}
-                    <div className="space-y-2 pb-4">
-                      <h1 className="font-display font-bold text-2xl sm:text-3xl text-white tracking-tight flex items-center gap-2">
-                        <SignIcon className="h-6 w-6 text-brand-red shrink-0" />
-                        <span>MI LISTA</span>
-                        {myListIds.length > 0 && (
-                          <span className="text-xs font-mono px-2.5 py-0.5 bg-brand-red/20 text-brand-red rounded-full border border-brand-red/30">
-                            {myListIds.length}
-                          </span>
-                        )}
-                      </h1>
-                      <p className="font-mono text-xs text-neutral-400 max-w-2xl leading-relaxed">
-                        Los elementos guardados se conservan durante 90 días.
-                      </p>
+                      {/* Recuadro de Mi Lista y Vistos - con el MISMO diseño y tamaño que el de episodios y catálogo */}
+                      <div className="inline-flex items-center gap-0.5 p-[2.5px] bg-[#090514] border border-[#2b1747] rounded-lg shadow-sm">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMyListTab('saved');
+                            window.history.replaceState(null, '', '/mi-lista');
+                          }}
+                          className={`px-2.5 py-1 rounded-[6px] font-mono text-[9px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer select-none ${
+                            myListTab === 'saved'
+                              ? 'bg-gradient-to-r from-purple-700 to-purple-600 text-white shadow-sm border border-purple-400/40'
+                              : 'text-neutral-400 hover:text-white hover:bg-white/5'
+                          }`}
+                          title="Mostrar animes guardados en Mi Lista"
+                        >
+                          <span>Mi Lista</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMyListTab('watched');
+                            window.history.replaceState(null, '', '/vistos');
+                          }}
+                          className={`px-2.5 py-1 rounded-[6px] font-mono text-[9px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer select-none ${
+                            myListTab === 'watched'
+                              ? 'bg-gradient-to-r from-purple-700 to-purple-600 text-white shadow-sm border border-purple-400/40'
+                              : 'text-neutral-400 hover:text-white hover:bg-white/5'
+                          }`}
+                          title="Mostrar animes marcados como vistos"
+                        >
+                          <span>Vistos</span>
+                        </button>
+                      </div>
                     </div>
 
-                    {/* Grid of Saved Animes */}
-                    {(() => {
-                      const savedAnimes = animes.filter(a => myListIds.includes(a.id));
-                      
-                      if (savedAnimes.length === 0) {
-                        return (
-                          <div className="text-center py-16 px-4 bg-dark-card border border-dark-border rounded-2xl max-w-xl mx-auto my-8 space-y-3">
-                            <div className="flex justify-center pb-1"><SignIcon className="h-10 w-10 text-brand-red/70" /></div>
-                            <p className="font-sans text-neutral-300 text-sm leading-relaxed whitespace-pre-line">
-                              No has agregado ningún anime.{"\n\n"}
-                              Abre un anime y pulsa '<span className="text-brand-red font-semibold">Agregar a mi lista</span>' para guardarlo.
-                            </p>
-                            <div className="pt-2">
-                              <button
-                                onClick={() => navigateTo('home')}
-                                className="px-4 py-2 bg-brand-red hover:bg-[#ff3b75] text-white rounded-xl text-xs font-mono font-medium transition-colors cursor-pointer"
-                              >
-                                Explorar catálogo
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      }
-
-                      return (
-                        <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-0.5 sm:gap-1">
-                          {savedAnimes.map(anime => (
-                            <GalleryCard
-                              key={anime.id}
-                              anime={anime}
-                              studios={studios}
-                              onClick={() => navigateTo('detail', anime.id)}
-                            />
-                          ))}
+                    {/* LADO 1: MI LISTA */}
+                    {myListTab === 'saved' ? (
+                      <div className="space-y-4">
+                        {/* Header Title & Subtitle */}
+                        <div className="space-y-1.5 pb-2">
+                          <h1 className="font-display font-bold text-2xl sm:text-3xl text-white tracking-tight flex items-center gap-2">
+                            <SignIcon className="h-6 w-6 text-brand-red shrink-0" />
+                            <span>MI LISTA</span>
+                            {myListIds.length > 0 && (
+                              <span className="text-xs font-mono px-2.5 py-0.5 bg-brand-red/20 text-brand-red rounded-full border border-brand-red/30">
+                                {myListIds.length}
+                              </span>
+                            )}
+                          </h1>
+                          <p className="font-mono text-xs text-neutral-400 max-w-2xl leading-relaxed">
+                            Los elementos guardados se conservan durante 90 días.
+                          </p>
                         </div>
-                      );
-                    })()}
-                  </motion.div>
-                ) : currentPage === 'watched' ? (
-                  <motion.div
-                    key="watched-view"
-                    custom={navDirection}
-                    initial={(dir: number) => ({
-                      opacity: 0,
-                      x: dir >= 0 ? '100%' : '-100%'
-                    })}
-                    animate={{
-                      opacity: 1,
-                      x: 0
-                    }}
-                    exit={(dir: number) => ({
-                      opacity: 0,
-                      x: dir >= 0 ? '-100%' : '100%'
-                    })}
-                    transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-                    style={{ willChange: 'transform, opacity' }}
-                    className="space-y-6"
-                  >
-                    {/* Back Button */}
-                    <button
-                      onClick={() => navigateTo('home')}
-                      className="group inline-flex items-center gap-2 font-mono text-[10px] text-neutral-400 hover:text-emerald-400 uppercase tracking-widest transition-colors duration-300 cursor-pointer"
-                    >
-                      <ChevronLeft className="h-4 w-4 transition-transform duration-300 group-hover:-translate-x-1" />
-                      Galería
-                    </button>
 
-                    {/* Header Title & Subtitle */}
-                    <div className="space-y-2 pb-4">
-                      <h1 className="font-display font-bold text-2xl sm:text-3xl text-white tracking-tight flex items-center gap-2">
-                        <Eye className="h-6 w-6 text-emerald-400 shrink-0" />
-                        <span>ANIMES VISTOS</span>
-                        {watchedIds.length > 0 && (
-                          <span className="text-xs font-mono px-2.5 py-0.5 bg-emerald-500/20 text-emerald-300 rounded-full border border-emerald-500/30">
-                            {watchedIds.length}
-                          </span>
-                        )}
-                      </h1>
-                      <p className="font-mono text-xs text-neutral-400 max-w-2xl leading-relaxed">
-                        Historial de animes que has marcado como vistos.
-                      </p>
-                    </div>
+                        {/* Grid of Saved Animes */}
+                        {(() => {
+                          const savedAnimes = animes.filter(a => myListIds.includes(a.id));
+                          
+                          if (savedAnimes.length === 0) {
+                            return (
+                              <div className="text-center py-16 px-4 bg-dark-card border border-dark-border rounded-2xl max-w-xl mx-auto my-8 space-y-3">
+                                <div className="flex justify-center pb-1"><SignIcon className="h-10 w-10 text-brand-red/70" /></div>
+                                <p className="font-sans text-neutral-300 text-sm leading-relaxed whitespace-pre-line">
+                                  No has agregado ningún anime.{"\n\n"}
+                                  Abre un anime y pulsa '<span className="text-brand-red font-semibold">Agregar a mi lista</span>' para guardarlo.
+                                </p>
+                                <div className="pt-2">
+                                  <button
+                                    onClick={() => navigateTo('home')}
+                                    className="px-4 py-2 bg-brand-red hover:bg-[#ff3b75] text-white rounded-xl text-xs font-mono font-medium transition-colors cursor-pointer"
+                                  >
+                                    Explorar catálogo
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          }
 
-                    {/* Grid of Watched Animes */}
-                    {(() => {
-                      const watchedAnimes = animes.filter(a => watchedIds.includes(a.id));
-                      
-                      if (watchedAnimes.length === 0) {
-                        return (
-                          <div className="text-center py-16 px-4 bg-dark-card border border-dark-border rounded-2xl max-w-xl mx-auto my-8 space-y-3">
-                            <div className="flex justify-center pb-1"><Eye className="h-10 w-10 text-emerald-400/70" /></div>
-                            <p className="font-sans text-neutral-300 text-sm leading-relaxed whitespace-pre-line">
-                              No has marcado ningún anime como visto aún.{"\n\n"}
-                              Abre cualquier anime y pulsa '<span className="text-emerald-400 font-semibold">Visto</span>' para añadirlo a tu historial.
-                            </p>
-                            <div className="pt-2">
-                              <button
-                                onClick={() => navigateTo('home')}
-                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-mono font-medium transition-colors cursor-pointer"
-                              >
-                                Explorar catálogo
-                              </button>
+                          return (
+                            <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-0.5 sm:gap-1">
+                              {savedAnimes.map(anime => (
+                                <GalleryCard
+                                  key={anime.id}
+                                  anime={anime}
+                                  studios={studios}
+                                  onClick={() => navigateTo('detail', anime.id)}
+                                />
+                              ))}
                             </div>
-                          </div>
-                        );
-                      }
-
-                      return (
-                        <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-0.5 sm:gap-1">
-                          {watchedAnimes.map(anime => (
-                            <GalleryCard
-                              key={anime.id}
-                              anime={anime}
-                              studios={studios}
-                              onClick={() => navigateTo('detail', anime.id)}
-                            />
-                          ))}
+                          );
+                        })()}
+                      </div>
+                    ) : (
+                      /* LADO 2: VISTOS */
+                      <div className="space-y-4">
+                        {/* Header Title & Subtitle */}
+                        <div className="space-y-1.5 pb-2">
+                          <h1 className="font-display font-bold text-2xl sm:text-3xl text-white tracking-tight flex items-center gap-2">
+                            <Eye className="h-6 w-6 text-emerald-400 shrink-0" />
+                            <span>ANIMES VISTOS</span>
+                            {watchedIds.length > 0 && (
+                              <span className="text-xs font-mono px-2.5 py-0.5 bg-emerald-500/20 text-emerald-300 rounded-full border border-emerald-500/30">
+                                {watchedIds.length}
+                              </span>
+                            )}
+                          </h1>
+                          <p className="font-mono text-xs text-neutral-400 max-w-2xl leading-relaxed">
+                            Historial de animes que has marcado como vistos.
+                          </p>
                         </div>
-                      );
-                    })()}
+
+                        {/* Grid of Watched Animes */}
+                        {(() => {
+                          const watchedAnimes = animes.filter(a => watchedIds.includes(a.id));
+                          
+                          if (watchedAnimes.length === 0) {
+                            return (
+                              <div className="text-center py-16 px-4 bg-dark-card border border-dark-border rounded-2xl max-w-xl mx-auto my-8 space-y-3">
+                                <div className="flex justify-center pb-1"><Eye className="h-10 w-10 text-emerald-400/70" /></div>
+                                <p className="font-sans text-neutral-300 text-sm leading-relaxed whitespace-pre-line">
+                                  No has marcado ningún anime como visto aún.{"\n\n"}
+                                  Abre cualquier anime y pulsa '<span className="text-emerald-400 font-semibold">Visto</span>' para añadirlo a tu historial.
+                                </p>
+                                <div className="pt-2">
+                                  <button
+                                    onClick={() => navigateTo('home')}
+                                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-mono font-medium transition-colors cursor-pointer"
+                                  >
+                                    Explorar catálogo
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-0.5 sm:gap-1">
+                              {watchedAnimes.map(anime => (
+                                <GalleryCard
+                                  key={anime.id}
+                                  anime={anime}
+                                  studios={studios}
+                                  onClick={() => navigateTo('detail', anime.id)}
+                                />
+                              ))}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
                   </motion.div>
                 ) : (
                   <motion.div
@@ -2495,11 +2543,19 @@ export default function App() {
             watchedCount={watchedIds.length}
             onOpenMyList={() => navigateTo('my-list')}
             onOpenWatched={() => navigateTo('watched')}
+            onOpenReportModal={() => setIsReportModalOpen(true)}
             onLogout={handleLogout}
             onUserUpdated={handleUserUpdated}
           />
         )}
       </AnimatePresence>
+
+      {/* Report Issue Chat Modal */}
+      <ReportIssueModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        currentUser={currentUser}
+      />
     </div>
   );
 }
