@@ -3031,8 +3031,9 @@ async function pollTelegramReplies() {
   }
 }
 
-// Start polling Telegram every 3 seconds
-setInterval(pollTelegramReplies, 3000);
+// Background Telegram polling is disabled so the server does NOT consume/delete
+// Telegram updates that the web app deployed on Vercel needs to read directly.
+// (In production on Vercel, the browser communicates directly with Telegram Bot API).
 
 // User Problem Reporting Endpoint
 app.post('/api/reports', async (req, res) => {

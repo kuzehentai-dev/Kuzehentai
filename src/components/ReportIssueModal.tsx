@@ -114,14 +114,99 @@ export default function ReportIssueModal({
     } catch {}
   }, [messages]);
 
-  // Check for admin replies from Telegram (Zero Firebase, resilient on Vercel)
+  // Check for admin replies from Telegram (Zero Firebase, 100% operational on Vercel)
   const fetchReplies = useCallback(async (manual = false) => {
     if (manual) setIsCheckingReplies(true);
     try {
       const userEmail = currentUser?.email || '';
-      let gotBackendReplies = false;
 
-      // 1. Try local Node backend if running
+      // 1. Direct Telegram Bot API getUpdates query (CORS enabled, works seamlessly on Vercel)
+      try {
+        const tgRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?limit=100`);
+        if (tgRes.ok) {
+          const tgData = await tgRes.json();
+          if (tgData?.ok && Array.isArray(tgData.result)) {
+            const matchedReplies: ChatMessage[] = [];
+
+            // Extract user sent report snippets from localStorage for reliable quote matching
+            let userReportSnippets: string[] = [];
+            try {
+              const raw = localStorage.getItem('kh_report_chat_messages');
+              if (raw) {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) {
+                  userReportSnippets = parsed
+                    .filter((m: any) => m.sender === 'user' && m.text)
+                    .map((m: any) => m.text.trim())
+                    .filter((t: string) => t.length > 3);
+                }
+              }
+            } catch {}
+
+            for (const update of tgData.result) {
+              const msg = update?.message;
+              if (!msg || !msg.text) continue;
+              if (msg.from && msg.from.is_bot) continue;
+
+              const replyTo = msg.reply_to_message;
+              let isForMe = false;
+
+              if (replyTo) {
+                const quotedText = replyTo.text || '';
+                // 1. Match by user ID
+                if (effectiveUserId && quotedText.includes(effectiveUserId)) {
+                  isForMe = true;
+                }
+                // 2. Match by user email
+                else if (userEmail && quotedText.includes(userEmail)) {
+                  isForMe = true;
+                }
+                // 3. Match by user message snippet
+                else if (userReportSnippets.some(s => quotedText.includes(s.slice(0, 25)))) {
+                  isForMe = true;
+                }
+              } else {
+                // Admin sent message in bot chat without quoting
+                const isFromAdminChat =
+                  String(msg.chat?.id) === String(TELEGRAM_CHAT_ID) ||
+                  String(msg.from?.id) === String(TELEGRAM_CHAT_ID);
+                const isNotCommand = !msg.text.startsWith('/');
+                if (isFromAdminChat && isNotCommand && userReportSnippets.length > 0) {
+                  // Only accept messages from the last 24h
+                  const msgTime = (msg.date || 0) * 1000;
+                  const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+                  if (msgTime > oneDayAgo) {
+                    isForMe = true;
+                  }
+                }
+              }
+
+              if (isForMe) {
+                const replyId = 'tg-reply-' + (msg.message_id || update.update_id);
+                matchedReplies.push({
+                  id: replyId,
+                  sender: 'admin',
+                  text: msg.text,
+                  timestamp: new Date((msg.date || Math.floor(Date.now() / 1000)) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                });
+              }
+            }
+
+            if (matchedReplies.length > 0) {
+              setMessages(prev => {
+                const existingIds = new Set(prev.map(m => m.id));
+                const newOnes = matchedReplies.filter(r => !existingIds.has(r.id));
+                if (newOnes.length === 0) return prev;
+                return [...prev, ...newOnes];
+              });
+            }
+          }
+        }
+      } catch (tgErr) {
+        console.warn('Telegram direct fetch error:', tgErr);
+      }
+
+      // 2. Fallback check on local Node endpoint if running with local server
       try {
         const params = new URLSearchParams({
           userId: effectiveUserId,
@@ -132,70 +217,25 @@ export default function ReportIssueModal({
           const contentType = res.headers.get('content-type') || '';
           if (contentType.includes('application/json')) {
             const data = await res.json();
-            if (data?.replies && Array.isArray(data.replies)) {
-              gotBackendReplies = true;
-              if (data.replies.length > 0) {
-                setMessages(prev => {
-                  const existingIds = new Set(prev.map(m => m.id));
-                  const newReplies = data.replies.filter((r: any) => !existingIds.has(r.id));
-                  if (newReplies.length === 0) return prev;
-                  return [
-                    ...prev,
-                    ...newReplies.map((r: any) => ({
-                      id: r.id,
-                      sender: 'admin' as const,
-                      text: r.text,
-                      timestamp: r.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    }))
-                  ];
-                });
-              }
+            if (data?.replies && Array.isArray(data.replies) && data.replies.length > 0) {
+              setMessages(prev => {
+                const existingIds = new Set(prev.map(m => m.id));
+                const newReplies = data.replies.filter((r: any) => !existingIds.has(r.id));
+                if (newReplies.length === 0) return prev;
+                return [
+                  ...prev,
+                  ...newReplies.map((r: any) => ({
+                    id: r.id,
+                    sender: 'admin' as const,
+                    text: r.text,
+                    timestamp: r.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                  }))
+                ];
+              });
             }
           }
         }
       } catch {}
-
-      // 2. If no backend (e.g. deployed statically on Vercel), query Telegram getUpdates directly
-      if (!gotBackendReplies) {
-        try {
-          const tgRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=-30&timeout=0`);
-          if (tgRes.ok) {
-            const tgData = await tgRes.json();
-            if (tgData?.ok && Array.isArray(tgData.result)) {
-              const matchedReplies: ChatMessage[] = [];
-              for (const update of tgData.result) {
-                const msg = update?.message;
-                if (!msg || !msg.text) continue;
-                if (msg.from && msg.from.is_bot) continue;
-
-                const replyTo = msg.reply_to_message;
-                if (!replyTo) continue;
-
-                const quotedText = replyTo.text || '';
-                const isForMe = quotedText.includes(effectiveUserId) || (userEmail && quotedText.includes(userEmail));
-                if (isForMe) {
-                  const replyId = 'tg-reply-' + (msg.message_id || update.update_id);
-                  matchedReplies.push({
-                    id: replyId,
-                    sender: 'admin',
-                    text: msg.text,
-                    timestamp: new Date((msg.date || Math.floor(Date.now() / 1000)) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                  });
-                }
-              }
-
-              if (matchedReplies.length > 0) {
-                setMessages(prev => {
-                  const existingIds = new Set(prev.map(m => m.id));
-                  const newOnes = matchedReplies.filter(r => !existingIds.has(r.id));
-                  if (newOnes.length === 0) return prev;
-                  return [...prev, ...newOnes];
-                });
-              }
-            }
-          }
-        } catch {}
-      }
     } catch {
       // Ignore polling errors
     } finally {
@@ -283,7 +323,7 @@ export default function ReportIssueModal({
         `💬 *Mensaje:*\n${text}\n\n` +
         `📅 *Fecha:* ${dateFormatted}\n` +
         (typeof navigator !== 'undefined' ? `📱 *Dispositivo:* ${navigator.userAgent.slice(0, 70)}...\n\n` : '\n') +
-        `💬 _Para responderle al usuario en el chat de la web, desliza sobre este mensaje (Reply) y escribe tu respuesta._`;
+        `💬 👉 *Para responderle al usuario:* Mantén presionado este mensaje y selecciona *Responder* (Reply) para escribirle tu respuesta.`;
 
       // 1. Envío DIRECTO a Telegram (Garantizado en Vercel, Netlify o cualquier hosting)
       const directPromise = fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
