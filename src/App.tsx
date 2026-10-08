@@ -39,6 +39,7 @@ import StudioDetailModal from './components/StudioDetailModal';
 import AuthModal from './components/AuthModal';
 import UserProfileModal from './components/UserProfileModal';
 import ReportIssueModal from './components/ReportIssueModal';
+import PopularHeroCarousel from './components/PopularHeroCarousel';
 
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
 import { SmartAnimeCover, processImageSrc, globalImageCache, preloadAllAnimes, preloadAnimeCover, getFallbackSvg, startPrioritizedAppLoading, prefetchAnime, prefetchCatalogPage } from './utils/imageFallback';
@@ -1568,14 +1569,14 @@ export default function App() {
       return a.originalIndex - b.originalIndex;
     });
 
-    // Selecciona exactamente el Top 3 más popular (o los mejores animes si aún no hay 3 con visitas)
+    // Selecciona los más populares para el carrusel hero estilo Crunchyroll (hasta 6 animes destacados)
     const finalTop = popularOnly.length >= 3
       ? popularOnly
       : (popularOnly.length > 0
           ? [...popularOnly, ...scored.filter(s => !popularOnly.some(p => p.anime.id === s.anime.id))]
           : scored);
 
-    return finalTop.slice(0, 3).map(item => item.anime);
+    return finalTop.slice(0, 6).map(item => item.anime);
   }, [animes, studios, genres, genreUsageMap]);
 
   // Render Section Selector helper
@@ -1867,7 +1868,7 @@ export default function App() {
             </nav>
 
             {/* 3. Main Search & Explore Gallery Area */}
-            <main id="explorar" className="relative z-10 max-w-[1500px] 2xl:max-w-[1800px] 3xl:max-w-[2100px] mx-auto w-full px-1.5 sm:px-5 lg:px-7 pt-24 pb-3 sm:pb-4 space-y-4 flex-grow">
+            <main id="explorar" className="relative z-10 max-w-[1500px] 2xl:max-w-[1800px] 3xl:max-w-[2100px] mx-auto w-full px-1.5 sm:px-5 lg:px-7 pt-[62px] sm:pt-[68px] pb-3 sm:pb-4 space-y-4 flex-grow">
               <AnimatePresence mode="popLayout" custom={navDirection} initial={false}>
                 {currentPage === 'my-list' || currentPage === 'watched' ? (
                   <motion.div
@@ -2072,55 +2073,18 @@ export default function App() {
                     transition={{ duration: 0.36, ease: [0.16, 1, 0.3, 1] }}
                     className="space-y-5"
                   >
-        {/* Compact Top 3 Portadas Más Populares Section (Positioned above search bar) */}
-        <div className="space-y-2">
-          <div className="flex items-center">
-            <h2 className="flex items-center gap-1.5 font-mono text-[10px] text-[#ff5588] uppercase tracking-widest font-bold">
-              <Flame className="h-3.5 w-3.5" />
-              <span>Más Populares</span>
-            </h2>
-          </div>
-
-          {loading ? (
-            <div className="grid grid-cols-3 gap-0.5 sm:gap-1 max-w-2xl">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="aspect-[2/3] bg-[#15121e] border border-[#272236] rounded-lg animate-pulse" />
-              ))}
-            </div>
-          ) : top3Animes.length > 0 ? (
-            <div className="grid grid-cols-3 gap-0.5 sm:gap-1 max-w-2xl">
-              {top3Animes.map((anime) => {
-                const sIds = (anime.studioIds && anime.studioIds.length > 0)
-                  ? anime.studioIds
-                  : (anime.studioId ? [anime.studioId] : []);
-                const studioName = studios.find(s => sIds.includes(s.id))?.name || 'Sin estudio';
-                return (
-                  <div
-                    key={anime.id}
-                    onClick={() => navigateTo('detail', anime.id)}
-                    title={anime.name}
-                    className="group relative aspect-[2/3] bg-neutral-900 rounded-xl overflow-hidden border border-[#272236] hover:border-[#ff5588]/70 shadow-md hover:shadow-lg hover:shadow-[#ff5588]/15 cursor-pointer block p-0 text-left touch-manipulation select-none active:scale-[0.96] hover:-translate-y-0.5 transition-all duration-200"
-                  >
-                    <SmartAnimeCover
-                      anime={anime}
-                      studioName={studioName}
-                      alt={anime.name}
-                      loading="eager"
-                      priority={true}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                    {/* Subtle title overlay at bottom */}
-                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent p-1.5 sm:p-2 pt-4 pointer-events-none">
-                      <p className="font-display text-xs sm:text-[13px] text-white font-medium truncate group-hover:text-[#ff5588] transition-colors leading-tight">
-                        {anime.name}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
-        </div>
+        {/* Crunchyroll-Style Hero Banner Carousel for Más Populares */}
+        <section aria-label="Animes Más Populares" className="w-full no-swipe">
+          <PopularHeroCarousel
+            animes={top3Animes}
+            studios={studios}
+            genres={genres}
+            onSelectAnime={(animeId) => navigateTo('detail', animeId)}
+            savedAnimeIds={myListIds}
+            onToggleMyList={handleToggleMyList}
+            loading={loading}
+          />
+        </section>
 
         {/* Real-time Search Input Bar with Separate "Filtros" Bubble */}
         <div className="space-y-3">

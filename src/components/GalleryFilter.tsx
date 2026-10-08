@@ -29,12 +29,12 @@ function GalleryFilter({
 }: GalleryFilterProps) {
   return (
     <div className="w-full py-0.5">
-      {/* Recuadro de episodios y catálogo - ligeramente más grueso verticalmente con color violeta */}
-      <div className="inline-flex items-center gap-0.5 p-[2.5px] bg-[#090514] border border-[#2b1747] rounded-lg shadow-sm">
+      {/* Recuadro de episodios y catálogo - redondeado con bordes suaves y color violeta */}
+      <div className="inline-flex items-center gap-1 p-1 bg-[#090514] border border-[#2b1747] rounded-xl shadow-sm">
         <button
           type="button"
           onClick={() => onToggleDisplayMode && onToggleDisplayMode('episodes')}
-          className={`px-2.5 py-1 rounded-[6px] font-mono text-[9px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer select-none ${
+          className={`px-3 py-1 rounded-lg font-mono text-[9px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer select-none ${
             displayMode === 'episodes'
               ? 'bg-gradient-to-r from-purple-700 to-purple-600 text-white shadow-sm border border-purple-400/40'
               : 'text-neutral-400 hover:text-white hover:bg-white/5'
@@ -46,7 +46,7 @@ function GalleryFilter({
         <button
           type="button"
           onClick={() => onToggleDisplayMode && onToggleDisplayMode('catalog')}
-          className={`px-2.5 py-1 rounded-[6px] font-mono text-[9px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer select-none ${
+          className={`px-3 py-1 rounded-lg font-mono text-[9px] font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer select-none ${
             displayMode === 'catalog'
               ? 'bg-gradient-to-r from-purple-700 to-purple-600 text-white shadow-sm border border-purple-400/40'
               : 'text-neutral-400 hover:text-white hover:bg-white/5'

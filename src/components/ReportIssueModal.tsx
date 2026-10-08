@@ -24,6 +24,9 @@ const DEFAULT_GREETING: ChatMessage = {
   timestamp: 'Justo ahora'
 };
 
+const TELEGRAM_BOT_TOKEN = '8870602337:AAHM2VP4BPE1EHxgJFzjHyFu6fxyu71Cyd4';
+const TELEGRAM_CHAT_ID = '8401789540';
+
 interface QuickAction {
   label: string;
   template: string;
@@ -111,33 +114,87 @@ export default function ReportIssueModal({
     } catch {}
   }, [messages]);
 
-  // Check for admin replies from Telegram (Zero Firebase, zero cost)
+  // Check for admin replies from Telegram (Zero Firebase, resilient on Vercel)
   const fetchReplies = useCallback(async (manual = false) => {
     if (manual) setIsCheckingReplies(true);
     try {
       const userEmail = currentUser?.email || '';
-      const params = new URLSearchParams({
-        userId: effectiveUserId,
-        email: userEmail
-      });
-      const res = await fetch(`/api/reports/replies?${params.toString()}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data?.replies && Array.isArray(data.replies) && data.replies.length > 0) {
-        setMessages(prev => {
-          const existingIds = new Set(prev.map(m => m.id));
-          const newReplies = data.replies.filter((r: any) => !existingIds.has(r.id));
-          if (newReplies.length === 0) return prev;
-          return [
-            ...prev,
-            ...newReplies.map((r: any) => ({
-              id: r.id,
-              sender: 'admin' as const,
-              text: r.text,
-              timestamp: r.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            }))
-          ];
+      let gotBackendReplies = false;
+
+      // 1. Try local Node backend if running
+      try {
+        const params = new URLSearchParams({
+          userId: effectiveUserId,
+          email: userEmail
         });
+        const res = await fetch(`/api/reports/replies?${params.toString()}`);
+        if (res.ok) {
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = await res.json();
+            if (data?.replies && Array.isArray(data.replies)) {
+              gotBackendReplies = true;
+              if (data.replies.length > 0) {
+                setMessages(prev => {
+                  const existingIds = new Set(prev.map(m => m.id));
+                  const newReplies = data.replies.filter((r: any) => !existingIds.has(r.id));
+                  if (newReplies.length === 0) return prev;
+                  return [
+                    ...prev,
+                    ...newReplies.map((r: any) => ({
+                      id: r.id,
+                      sender: 'admin' as const,
+                      text: r.text,
+                      timestamp: r.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    }))
+                  ];
+                });
+              }
+            }
+          }
+        }
+      } catch {}
+
+      // 2. If no backend (e.g. deployed statically on Vercel), query Telegram getUpdates directly
+      if (!gotBackendReplies) {
+        try {
+          const tgRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=-30&timeout=0`);
+          if (tgRes.ok) {
+            const tgData = await tgRes.json();
+            if (tgData?.ok && Array.isArray(tgData.result)) {
+              const matchedReplies: ChatMessage[] = [];
+              for (const update of tgData.result) {
+                const msg = update?.message;
+                if (!msg || !msg.text) continue;
+                if (msg.from && msg.from.is_bot) continue;
+
+                const replyTo = msg.reply_to_message;
+                if (!replyTo) continue;
+
+                const quotedText = replyTo.text || '';
+                const isForMe = quotedText.includes(effectiveUserId) || (userEmail && quotedText.includes(userEmail));
+                if (isForMe) {
+                  const replyId = 'tg-reply-' + (msg.message_id || update.update_id);
+                  matchedReplies.push({
+                    id: replyId,
+                    sender: 'admin',
+                    text: msg.text,
+                    timestamp: new Date((msg.date || Math.floor(Date.now() / 1000)) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                  });
+                }
+              }
+
+              if (matchedReplies.length > 0) {
+                setMessages(prev => {
+                  const existingIds = new Set(prev.map(m => m.id));
+                  const newOnes = matchedReplies.filter(r => !existingIds.has(r.id));
+                  if (newOnes.length === 0) return prev;
+                  return [...prev, ...newOnes];
+                });
+              }
+            }
+          }
+        } catch {}
       }
     } catch {
       // Ignore polling errors
@@ -202,25 +259,66 @@ export default function ReportIssueModal({
     setIsSending(true);
 
     try {
-      // 1. Send directly to backend -> Telegram notification (Zero Firebase usage)
-      await fetch('/api/reports', {
+      const now = new Date();
+      const dateFormatted = now.toLocaleString('es-ES', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
+      const headerTitle = isSuggestion 
+        ? `💡 *NUEVA SUGERENCIA DE USUARIO*`
+        : `🚨 *REPORTE DE PROBLEMA O FALLO*`;
+
+      const userDisplay = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Usuario Anónimo';
+      const userEmail = currentUser?.email || '';
+
+      const telegramText = 
+        `${headerTitle}\n\n` +
+        `👤 *Usuario:* ${userDisplay}\n` +
+        (userEmail ? `📧 *Correo:* ${userEmail}\n` : '') +
+        `🆔 *ID Usuario:* \`${effectiveUserId}\`\n` +
+        `💬 *Mensaje:*\n${text}\n\n` +
+        `📅 *Fecha:* ${dateFormatted}\n` +
+        (typeof navigator !== 'undefined' ? `📱 *Dispositivo:* ${navigator.userAgent.slice(0, 70)}...\n\n` : '\n') +
+        `💬 _Para responderle al usuario en el chat de la web, desliza sobre este mensaje (Reply) y escribe tu respuesta._`;
+
+      // 1. Envío DIRECTO a Telegram (Garantizado en Vercel, Netlify o cualquier hosting)
+      const directPromise = fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: TELEGRAM_CHAT_ID,
+          text: telegramText,
+          parse_mode: 'Markdown'
+        })
+      }).catch(err => {
+        console.warn('Direct Telegram fetch warning:', err);
+      });
+
+      // 2. Respaldo a endpoint local /api/reports si corre con Node
+      const backendPromise = fetch('/api/reports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: effectiveUserId,
-          userName: currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Usuario Anónimo',
-          userEmail: currentUser?.email || '',
+          userName: userDisplay,
+          userEmail,
           message: text,
           deviceInfo: typeof navigator !== 'undefined' ? navigator.userAgent : ''
         })
-      });
+      }).catch(() => null);
+
+      await Promise.race([directPromise, new Promise(res => setTimeout(res, 2000))]);
     } catch (err) {
-      console.warn('Backend report error:', err);
+      console.warn('Report dispatch error:', err);
     } finally {
       setIsSending(false);
     }
 
-    // 2. Automated friendly bot response
+    // Automated friendly bot response
     setTimeout(() => {
       const botMsgId = 'bot-' + Date.now();
       const botResponse: ChatMessage = {
