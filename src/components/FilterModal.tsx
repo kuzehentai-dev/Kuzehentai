@@ -141,7 +141,7 @@ function FilterModal({
             onAnimationComplete={() => {
               if (scrollRef.current) scrollRef.current.scrollTop = 0;
             }}
-            className="relative w-full max-w-[460px] bg-[#110822] border border-[#2e174e] rounded-2xl shadow-2xl flex flex-col overflow-hidden h-[380px] max-h-[75vh] z-10"
+            className="relative w-full max-w-[460px] bg-[#110822] border border-[#2e174e] rounded-2xl shadow-2xl flex flex-col overflow-hidden h-[520px] max-h-[86vh] z-10"
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3.5 border-b border-[#26133f] bg-[#110822] shrink-0">
@@ -427,7 +427,7 @@ function FilterModal({
             </div>
 
             {/* Sticky Bottom Button */}
-            <div className="p-3.5 sm:p-4 bg-[#110822] border-t border-[#26133f] shrink-0">
+            <div className="p-3 sm:p-3.5 bg-[#110822] border-t border-[#26133f] shrink-0">
               <button
                 type="button"
                 onClick={onClose}

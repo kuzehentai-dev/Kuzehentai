@@ -205,27 +205,29 @@ export default function StudioDetailModal({
       const duration = Date.now() - startTime;
       startTime = 0;
 
-      // Deslizamiento horizontal:
-      // Deslizar de IZQUIERDA a DERECHA (Swipe Right):
-      // Si está en la página 2 o superior, vuelve a la página anterior del estudio (idéntico al catálogo)
-      // Si está en la primera página (página 1), sale del estudio y regresa al anime previo o al catálogo
-      if (deltaX > 45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.15 && duration < 800) {
-        try {
-          if (navigator.vibrate) navigator.vibrate(20);
-        } catch {}
-        if (page > 1) {
-          handlePageChange(page - 1);
-        } else {
-          onClose();
-        }
-      }
-      // Deslizar de DERECHA a IZQUIERDA (Swipe Left) avanza a la siguiente página del estudio si existe
-      else if (deltaX < -45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.15 && duration < 800) {
-        if (page < totalPages) {
+      const absX = Math.abs(deltaX);
+      const absY = Math.abs(deltaY);
+      const isHorizontal = absX > absY * 0.82;
+      const isFastFlick = absX >= 22 && duration < 240;
+      const isStandardSwipe = absX >= 30 && duration < 700;
+
+      if (isHorizontal && (isFastFlick || isStandardSwipe)) {
+        if (deltaX > 0) {
           try {
-            if (navigator.vibrate) navigator.vibrate(20);
+            if (navigator.vibrate) navigator.vibrate(12);
           } catch {}
-          handlePageChange(page + 1);
+          if (page > 1) {
+            handlePageChange(page - 1);
+          } else {
+            onClose();
+          }
+        } else if (deltaX < 0) {
+          if (page < totalPages) {
+            try {
+              if (navigator.vibrate) navigator.vibrate(12);
+            } catch {}
+            handlePageChange(page + 1);
+          }
         }
       }
     };
@@ -418,37 +420,23 @@ export default function StudioDetailModal({
           ) : (
             <>
               <div className="relative w-full overflow-hidden">
-                <AnimatePresence mode="popLayout" custom={pageDirection}>
-                  <motion.div
-                    key={page}
-                    custom={pageDirection}
-                    initial={(dir: number) => ({
-                      x: dir >= 0 ? 15 : -15
-                    })}
-                    animate={{
-                      x: 0
-                    }}
-                    exit={(dir: number) => ({
-                      x: dir >= 0 ? -15 : 15
-                    })}
-                    transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
-                    style={{ willChange: 'transform' }}
-                    className="grid grid-cols-3 gap-1.5 sm:gap-2.5 md:gap-3"
-                  >
-                    {currentStudioAnimes.map((item, index) => (
-                      <GalleryCard
-                        key={item.id}
-                        anime={item}
-                        studios={studios}
-                        onClick={() => {
-                          const scrollY = containerRef.current ? containerRef.current.scrollTop : 0;
-                          onSelectAnime(item.id, page, scrollY);
-                        }}
-                        index={index}
-                      />
-                    ))}
-                  </motion.div>
-                </AnimatePresence>
+                <div
+                  key={page}
+                  className="grid grid-cols-3 gap-1.5 sm:gap-2.5 md:gap-3"
+                >
+                  {currentStudioAnimes.map((item, index) => (
+                    <GalleryCard
+                      key={item.id}
+                      anime={item}
+                      studios={studios}
+                      onClick={() => {
+                        const scrollY = containerRef.current ? containerRef.current.scrollTop : 0;
+                        onSelectAnime(item.id, page, scrollY);
+                      }}
+                      index={index}
+                    />
+                  ))}
+                </div>
               </div>
 
               {/* Barra para cambiar de página */}
@@ -461,6 +449,9 @@ export default function StudioDetailModal({
                       {/* Previous Page Button */}
                       <button
                         onClick={() => handlePageChange(page - 1)}
+                        onMouseEnter={() => page > 1 && prefetchCatalogPage(currentStudioAnimes, page - 1, ITEMS_PER_PAGE, studios)}
+                        onTouchStart={() => page > 1 && prefetchCatalogPage(currentStudioAnimes, page - 1, ITEMS_PER_PAGE, studios)}
+                        onPointerDown={() => page > 1 && prefetchCatalogPage(currentStudioAnimes, page - 1, ITEMS_PER_PAGE, studios)}
                         disabled={page === 1}
                         aria-label="Página anterior"
                         className="p-2 shrink-0 text-white hover:text-[#ff5588] active:scale-95 disabled:opacity-20 disabled:hover:text-white disabled:cursor-not-allowed transition-colors cursor-pointer select-none"
@@ -477,6 +468,8 @@ export default function StudioDetailModal({
                             key={pNum}
                             onClick={() => handlePageChange(pNum)}
                             onMouseEnter={() => prefetchCatalogPage(currentStudioAnimes, pNum, ITEMS_PER_PAGE, studios)}
+                            onTouchStart={() => prefetchCatalogPage(currentStudioAnimes, pNum, ITEMS_PER_PAGE, studios)}
+                            onPointerDown={() => prefetchCatalogPage(currentStudioAnimes, pNum, ITEMS_PER_PAGE, studios)}
                             className={`px-2.5 sm:px-3.5 py-1.5 shrink-0 font-mono text-xs sm:text-sm tracking-wider transition-all duration-150 cursor-pointer select-none ${
                               isActive
                                 ? 'text-[#ff5588] font-extrabold scale-110'
@@ -492,6 +485,8 @@ export default function StudioDetailModal({
                       <button
                         onClick={() => handlePageChange(page + 1)}
                         onMouseEnter={() => page < totalPages && prefetchCatalogPage(currentStudioAnimes, page + 1, ITEMS_PER_PAGE, studios)}
+                        onTouchStart={() => page < totalPages && prefetchCatalogPage(currentStudioAnimes, page + 1, ITEMS_PER_PAGE, studios)}
+                        onPointerDown={() => page < totalPages && prefetchCatalogPage(currentStudioAnimes, page + 1, ITEMS_PER_PAGE, studios)}
                         disabled={page === totalPages}
                         aria-label="Página siguiente"
                         className="p-2 shrink-0 text-white hover:text-[#ff5588] active:scale-95 disabled:opacity-20 disabled:hover:text-white disabled:cursor-not-allowed transition-colors cursor-pointer select-none"

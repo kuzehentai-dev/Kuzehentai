@@ -38,7 +38,6 @@ import FilterModal from './components/FilterModal';
 import StudioDetailModal from './components/StudioDetailModal';
 import AuthModal from './components/AuthModal';
 import UserProfileModal from './components/UserProfileModal';
-import { PWAInstallButton } from './components/PWAInstallButton';
 
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
 import { SmartAnimeCover, processImageSrc, globalImageCache, preloadAllAnimes, preloadAnimeCover, getFallbackSvg, startPrioritizedAppLoading, prefetchAnime, prefetchCatalogPage } from './utils/imageFallback';
@@ -1214,31 +1213,29 @@ export default function App() {
     return Math.max(1, Math.ceil(sortedAnimes.length / ITEMS_PER_PAGE));
   }, [sortedAnimes.length]);
 
-  const handlePageChange = useCallback((newPage: number) => {
+  const handlePageChange = useCallback((newPage: number, isSwipe = false) => {
     if (newPage < 1 || newPage > totalCatalogPages || newPage === page) return;
     setPageDirection(newPage > page ? 1 : -1);
     setPage(newPage);
     try {
       localStorage.setItem('kh_catalog_page', String(newPage));
     } catch {}
-    const gridElem = document.getElementById('portadas-grid-top');
-    if (gridElem) {
-      const rect = gridElem.getBoundingClientRect();
-      const currentY = window.scrollY || document.documentElement.scrollTop;
-      const targetY = Math.max(0, currentY + rect.top - 80);
-      window.scrollTo({ top: targetY, left: 0, behavior: 'instant' as ScrollBehavior });
-    } else {
-      window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+    
+    // Only adjust scroll if user has scrolled significantly past the grid top, and avoid jarring jumps during swipe
+    if (!isSwipe) {
+      const gridElem = document.getElementById('portadas-grid-top');
+      if (gridElem) {
+        const rect = gridElem.getBoundingClientRect();
+        if (rect.top < -100) {
+          const currentY = window.scrollY || document.documentElement.scrollTop;
+          const targetY = Math.max(0, currentY + rect.top - 80);
+          window.scrollTo({ top: targetY, left: 0, behavior: 'instant' as ScrollBehavior });
+        }
+      }
     }
   }, [page, totalCatalogPages]);
 
-  // Gestos de deslizamiento (Swipe):
-  // 1. En 'Episodios': deslizar de DERECHA a IZQUIERDA pasa al Catálogo.
-  // 2. En 'Catálogo':
-  //    - Deslizar de DERECHA a IZQUIERDA avanza a la página siguiente del catálogo.
-  //    - Deslizar de IZQUIERDA a DERECHA:
-  //      * Si página > 1: retrocede a la página anterior del catálogo.
-  //      * Si página === 1: vuelve al apartado de Episodios.
+  // Gestos de deslizamiento ultra-fluidos (Fast Responsive Swipe Gestures)
   useEffect(() => {
     if ((currentPage !== 'home' && currentPage !== 'my-list' && currentPage !== 'watched') || isFilterModalOpen || isAuthModalOpen || isProfileModalOpen) {
       return;
@@ -1257,7 +1254,6 @@ export default function App() {
           target.tagName === 'TEXTAREA' ||
           target.closest('input') ||
           target.closest('textarea') ||
-          target.closest('button.cursor-pointer') ||
           target.closest('.no-swipe'))
       ) {
         return;
@@ -1276,44 +1272,49 @@ export default function App() {
       const duration = Date.now() - startTime;
       startTime = 0;
 
-      // Movimiento horizontal predominante (evita interferir con scroll vertical)
-      if (Math.abs(deltaX) > 45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25 && duration < 750) {
+      const absX = Math.abs(deltaX);
+      const absY = Math.abs(deltaY);
+      const isHorizontal = absX > absY * 0.7;
+      const isFastFlick = absX >= 18 && duration < 320;
+      const isStandardSwipe = absX >= 24 && duration < 750;
+
+      if (isHorizontal && (isFastFlick || isStandardSwipe)) {
         if (currentPage === 'my-list' || currentPage === 'watched') {
-          if (deltaX > 45) {
+          if (deltaX > 0) {
             try {
-              if (navigator.vibrate) navigator.vibrate(20);
+              if (navigator.vibrate) navigator.vibrate(12);
             } catch {}
             navigateTo('home');
           }
           return;
         }
 
-        if (deltaX < -45) {
-          // Deslizamiento de DERECHA a IZQUIERDA (Swipe Left)
+        if (deltaX < 0) {
+          // Deslizamiento de DERECHA a IZQUIERDA (Swipe Left -> Siguiente)
           if (displayMode === 'episodes') {
             try {
-              if (navigator.vibrate) navigator.vibrate(20);
+              if (navigator.vibrate) navigator.vibrate(12);
             } catch {}
             handleToggleDisplayMode('catalog');
           } else if (displayMode === 'catalog') {
             if (page < totalCatalogPages) {
               try {
-                if (navigator.vibrate) navigator.vibrate(20);
+                if (navigator.vibrate) navigator.vibrate(12);
               } catch {}
-              handlePageChange(page + 1);
+              handlePageChange(page + 1, true);
             }
           }
-        } else if (deltaX > 45) {
-          // Deslizamiento de IZQUIERDA a DERECHA (Swipe Right)
+        } else if (deltaX > 0) {
+          // Deslizamiento de IZQUIERDA a DERECHA (Swipe Right -> Anterior)
           if (displayMode === 'catalog') {
             if (page > 1) {
               try {
-                if (navigator.vibrate) navigator.vibrate(20);
+                if (navigator.vibrate) navigator.vibrate(12);
               } catch {}
-              handlePageChange(page - 1);
+              handlePageChange(page - 1, true);
             } else {
               try {
-                if (navigator.vibrate) navigator.vibrate(20);
+                if (navigator.vibrate) navigator.vibrate(12);
               } catch {}
               handleToggleDisplayMode('episodes');
             }
@@ -1769,7 +1770,6 @@ export default function App() {
 
                 {/* Right Top Auth / User Button */}
                 <div className="flex items-center gap-2">
-                  <PWAInstallButton />
                   {currentUser ? (
                     <div className="flex items-center gap-2">
                       {currentUser.email?.toLowerCase() === 'kuzeofc@gmail.com' && (
@@ -2323,35 +2323,21 @@ export default function App() {
 
           return (
             <div id="portadas-grid-top" className="relative w-full overflow-hidden scroll-mt-28">
-              <AnimatePresence mode="popLayout" custom={pageDirection}>
-                <motion.div
-                  key={page}
-                  custom={pageDirection}
-                  initial={(dir: number) => ({
-                    x: dir >= 0 ? 15 : -15
-                  })}
-                  animate={{
-                    x: 0
-                  }}
-                  exit={(dir: number) => ({
-                    x: dir >= 0 ? -15 : 15
-                  })}
-                  transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
-                  style={{ willChange: 'transform' }}
-                  className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-0.5 sm:gap-1"
-                >
-                  {currentPageItems.map((anime, idx) => (
-                    <GalleryCard
-                      key={anime.id}
-                      anime={anime}
-                      studios={studios}
-                      index={idx}
-                      isNewEpisodesMode={false}
-                      onClick={() => navigateTo('detail', anime.id)}
-                    />
-                  ))}
-                </motion.div>
-              </AnimatePresence>
+              <div
+                key={page}
+                className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-0.5 sm:gap-1"
+              >
+                {currentPageItems.map((anime, idx) => (
+                  <GalleryCard
+                    key={anime.id}
+                    anime={anime}
+                    studios={studios}
+                    index={idx}
+                    isNewEpisodesMode={false}
+                    onClick={() => navigateTo('detail', anime.id)}
+                  />
+                ))}
+              </div>
 
               {/* Modern smart pagination controls (Only for Catalog mode) */}
               {displayMode === 'catalog' && totalPages > 1 && (() => {
@@ -2407,6 +2393,9 @@ export default function App() {
                       {/* Previous Page Button */}
                       <button
                         onClick={() => handlePageChange(page - 1)}
+                        onMouseEnter={() => page > 1 && prefetchCatalogPage(sortedAnimes, page - 1, ITEMS_PER_PAGE, studios)}
+                        onTouchStart={() => page > 1 && prefetchCatalogPage(sortedAnimes, page - 1, ITEMS_PER_PAGE, studios)}
+                        onPointerDown={() => page > 1 && prefetchCatalogPage(sortedAnimes, page - 1, ITEMS_PER_PAGE, studios)}
                         disabled={page === 1}
                         aria-label="Página anterior"
                         className="p-2 shrink-0 text-white hover:text-[#ff5588] active:scale-95 disabled:opacity-20 disabled:hover:text-white disabled:cursor-not-allowed transition-colors cursor-pointer select-none"
@@ -2423,6 +2412,8 @@ export default function App() {
                             key={pNum}
                             onClick={() => handlePageChange(pNum)}
                             onMouseEnter={() => prefetchCatalogPage(sortedAnimes, pNum, ITEMS_PER_PAGE, studios)}
+                            onTouchStart={() => prefetchCatalogPage(sortedAnimes, pNum, ITEMS_PER_PAGE, studios)}
+                            onPointerDown={() => prefetchCatalogPage(sortedAnimes, pNum, ITEMS_PER_PAGE, studios)}
                             className={`px-2.5 sm:px-3.5 py-1.5 shrink-0 font-mono text-xs sm:text-sm tracking-wider transition-all duration-150 cursor-pointer select-none ${
                               isActive
                                 ? 'text-[#ff5588] font-extrabold scale-110'
@@ -2438,6 +2429,8 @@ export default function App() {
                       <button
                         onClick={() => handlePageChange(page + 1)}
                         onMouseEnter={() => page < totalPages && prefetchCatalogPage(sortedAnimes, page + 1, ITEMS_PER_PAGE, studios)}
+                        onTouchStart={() => page < totalPages && prefetchCatalogPage(sortedAnimes, page + 1, ITEMS_PER_PAGE, studios)}
+                        onPointerDown={() => page < totalPages && prefetchCatalogPage(sortedAnimes, page + 1, ITEMS_PER_PAGE, studios)}
                         disabled={page === totalPages}
                         aria-label="Página siguiente"
                         className="p-2 shrink-0 text-white hover:text-[#ff5588] active:scale-95 disabled:opacity-20 disabled:hover:text-white disabled:cursor-not-allowed transition-colors cursor-pointer select-none"
