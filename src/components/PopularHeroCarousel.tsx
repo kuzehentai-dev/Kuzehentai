@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Plus, Check, Flame, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
+import { Play, Plus, Check, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import { Anime, Studio, Genre } from '../types';
 import { SmartAnimeCover } from '../utils/imageFallback';
 
@@ -161,7 +161,7 @@ export default function PopularHeroCarousel({
 
   if (loading) {
     return (
-      <div className="w-full relative rounded-2xl sm:rounded-3xl overflow-hidden bg-[#0a0515] border border-[#2b1747]/60 aspect-[4/5.2] xs:aspect-[3/4.2] sm:aspect-[16/11] md:aspect-[16/9.5] lg:aspect-[16/8.5] min-h-[500px] sm:min-h-[560px] md:min-h-[590px] max-h-[710px] animate-pulse no-swipe">
+      <div className="w-full relative rounded-2xl sm:rounded-3xl overflow-hidden bg-[#0a0515] border border-[#2b1747]/60 aspect-[4/5.5] xs:aspect-[3/4.5] sm:aspect-[16/11.8] md:aspect-[16/10.2] lg:aspect-[16/9] min-h-[530px] sm:min-h-[595px] md:min-h-[625px] max-h-[750px] animate-pulse no-swipe">
         <div className="absolute inset-0 bg-gradient-to-t from-[#090514] via-[#090514]/30 to-transparent" />
         <div className="absolute bottom-5 left-5 right-5 space-y-2">
           <div className="h-6 w-52 bg-white/10 rounded-lg" />
@@ -192,7 +192,7 @@ export default function PopularHeroCarousel({
     >
       {/* Crunchyroll-Style Hero Banner Card */}
       <div
-        className="relative w-full rounded-2xl sm:rounded-3xl overflow-hidden bg-[#0a0515] border border-[#2b1747] shadow-xl shadow-black/70 aspect-[4/5.2] xs:aspect-[3/4.2] sm:aspect-[16/11] md:aspect-[16/9.5] lg:aspect-[16/8.5] min-h-[500px] sm:min-h-[560px] md:min-h-[590px] max-h-[710px] flex flex-col justify-end touch-pan-y cursor-grab active:cursor-grabbing no-swipe"
+        className="relative w-full rounded-2xl sm:rounded-3xl overflow-hidden bg-[#0a0515] border border-[#2b1747] shadow-xl shadow-black/70 aspect-[4/5.5] xs:aspect-[3/4.5] sm:aspect-[16/11.8] md:aspect-[16/10.2] lg:aspect-[16/9] min-h-[530px] sm:min-h-[595px] md:min-h-[625px] max-h-[750px] flex flex-col justify-end touch-pan-y cursor-grab active:cursor-grabbing no-swipe"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -229,14 +229,6 @@ export default function PopularHeroCarousel({
         <div className="hidden sm:block absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-[#090514]/75 via-[#090514]/30 to-transparent pointer-events-none" />
         {/* Subtle top shade */}
         <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/50 to-transparent pointer-events-none" />
-
-        {/* Top-Right Badge: TOP # (Compact & Violet themed) */}
-        <div className="absolute top-3 right-3 sm:top-4 sm:right-4 z-20 flex items-center gap-1.5 pointer-events-none">
-          <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#090514]/85 backdrop-blur-md border border-purple-400/40 text-purple-200 text-[9px] font-mono font-bold tracking-wider uppercase shadow-md">
-            <Flame className="w-3 h-3 fill-purple-400 text-purple-400 shrink-0" />
-            <span>TOP #{currentIndex + 1}</span>
-          </div>
-        </div>
 
         {/* Hero Content Overlay: Compact info to showcase cover */}
         <div className="relative z-10 p-3.5 sm:p-5 md:p-6 flex flex-col justify-end space-y-1.5 sm:space-y-2 max-w-2xl">

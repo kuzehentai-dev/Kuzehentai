@@ -503,6 +503,13 @@ export default function App() {
     return () => window.removeEventListener('kh_open_auth_modal', handleOpenAuth);
   }, []);
 
+  const [ratingVersion, setRatingVersion] = useState(0);
+  useEffect(() => {
+    const handleRatingUpdate = () => setRatingVersion(v => v + 1);
+    window.addEventListener('kh_rating_updated', handleRatingUpdate);
+    return () => window.removeEventListener('kh_rating_updated', handleRatingUpdate);
+  }, []);
+
 
   const [isHeaderVisible, setIsHeaderVisible] = useState(true);
 
@@ -1448,6 +1455,15 @@ export default function App() {
     // Optimistically update download count in local state for immediate UI sorting
     setAnimes(prev => prev.map(a => a.id === animeId ? { ...a, downloads: (a.downloads || 0) + 1 } : a));
     try {
+      const now = Date.now();
+      const cutoff = now - 24 * 60 * 60 * 1000;
+      const raw = localStorage.getItem('kh_anime_views_24h');
+      const list = raw ? JSON.parse(raw) : [];
+      const filtered = Array.isArray(list) ? list.filter((item: any) => item && typeof item.timestamp === 'number' && item.timestamp > cutoff) : [];
+      filtered.push({ animeId, timestamp: now });
+      localStorage.setItem('kh_anime_views_24h', JSON.stringify(filtered.slice(-150)));
+    } catch {}
+    try {
       await fetch(`/api/animes/${animeId}/download`, { 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1511,73 +1527,143 @@ export default function App() {
     });
   }, [genres, animes, genreUsageMap]);
 
-  const top3Animes = React.useMemo(() => {
+  // --- Carrusel Hero estilo Crunchyroll (Ciclo de 24 horas: 3 Populares + 1 Mejor Calificado + 2 Nuevos Episodios) ---
+  const heroFeaturedAnimes = React.useMemo(() => {
     const visibleAnimes = animes.filter(a => !a.hidden);
     if (visibleAnimes.length === 0) return [];
 
-    const studioDownloadsMap: Record<string, number> = {};
-    const studioCountMap: Record<string, number> = {};
-    const genreDownloadsMap: Record<string, number> = {};
-    const genreCountMap: Record<string, number> = {};
+    const now = Date.now();
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    const cutoff24h = now - ONE_DAY_MS;
 
-    for (let i = 0; i < visibleAnimes.length; i++) {
-      const anime = visibleAnimes[i];
-      const dl = anime.downloads || 0;
-      const sIds = (anime.studioIds && anime.studioIds.length > 0)
-        ? anime.studioIds
-        : (anime.studioId ? [anime.studioId] : []);
-      for (let j = 0; j < sIds.length; j++) {
-        const sid = sIds[j];
-        if (sid) {
-          studioDownloadsMap[sid] = (studioDownloadsMap[sid] || 0) + dl;
-          studioCountMap[sid] = (studioCountMap[sid] || 0) + 1;
+    // 1. Obtener vistas registradas en el ciclo de las últimas 24 horas
+    const views24hMap: Record<string, number> = {};
+    try {
+      const raw = localStorage.getItem('kh_anime_views_24h');
+      if (raw) {
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          list.forEach((item: { animeId: string; timestamp: number }) => {
+            if (item && item.animeId && typeof item.timestamp === 'number' && item.timestamp >= cutoff24h) {
+              views24hMap[item.animeId] = (views24hMap[item.animeId] || 0) + 1;
+            }
+          });
         }
       }
-      if (anime.genreIds) {
-        for (let j = 0; j < anime.genreIds.length; j++) {
-          const gid = anime.genreIds[j];
-          genreDownloadsMap[gid] = (genreDownloadsMap[gid] || 0) + dl;
-          genreCountMap[gid] = (genreCountMap[gid] || 0) + 1;
+    } catch {}
+
+    const selectedIds = new Set<string>();
+
+    // A. DOS (2) ANIMES CON NUEVOS EPISODIOS AGREGADOS (un día antes / recientemente agregados)
+    const animesWithEpisodes = visibleAnimes.filter(anime => {
+      const eps = anime.episodes || [];
+      return eps.length > 0;
+    });
+
+    const getLatestEpTime = (an: Anime) => {
+      let maxTime = 0;
+      (an.episodes || []).forEach(ep => {
+        if (ep.addedToRecentAt) {
+          const t = new Date(ep.addedToRecentAt).getTime();
+          if (t > maxTime) maxTime = t;
+        } else if (ep.isNew) {
+          const t = an.updatedAt ? new Date(an.updatedAt).getTime() : (an.createdAt ? new Date(an.createdAt).getTime() : 1);
+          if (t > maxTime) maxTime = t;
+        }
+      });
+      if (maxTime === 0) {
+        maxTime = an.updatedAt ? new Date(an.updatedAt).getTime() : (an.createdAt ? new Date(an.createdAt).getTime() : 0);
+      }
+      return maxTime;
+    };
+
+    // Priorizar animes con episodios marcados explícitamente como isNew o con addedToRecentAt
+    const animesWithExplicitNew = animesWithEpisodes.filter(anime =>
+      (anime.episodes || []).some(ep => Boolean(ep.isNew) || Boolean(ep.addedToRecentAt))
+    );
+
+    animesWithExplicitNew.sort((a, b) => getLatestEpTime(b) - getLatestEpTime(a));
+
+    const chosenNewEpisodes: Anime[] = [];
+    for (const an of animesWithExplicitNew) {
+      if (chosenNewEpisodes.length >= 2) break;
+      chosenNewEpisodes.push(an);
+      selectedIds.add(an.id);
+    }
+
+    // Si aún faltan para completar 2, tomar animes con episodios más recientes
+    if (chosenNewEpisodes.length < 2) {
+      const remainingCandidates = animesWithEpisodes
+        .filter(a => !selectedIds.has(a.id))
+        .sort((a, b) => getLatestEpTime(b) - getLatestEpTime(a));
+      for (const an of remainingCandidates) {
+        if (chosenNewEpisodes.length >= 2) break;
+        chosenNewEpisodes.push(an);
+        selectedIds.add(an.id);
+      }
+    }
+
+    // B. UN (1) ANIME CON MÁS / MEJOR CALIFICACIONES DENTRO DEL CICLO DE 24 HORAS
+    const ratingCandidates = visibleAnimes.filter(a => !selectedIds.has(a.id));
+    ratingCandidates.sort((a, b) => {
+      const statsA = getAnimeRatingStats(a.id);
+      const statsB = getAnimeRatingStats(b.id);
+      const scoreA = (statsA.average > 0 ? statsA.average * 1000 : 0) + (statsA.totalVotes * 100);
+      const scoreB = (statsB.average > 0 ? statsB.average * 1000 : 0) + (statsB.totalVotes * 100);
+
+      if (scoreB !== scoreA) return scoreB - scoreA;
+      // Desempate por vistas en 24h y descargas
+      const v24A = views24hMap[a.id] || 0;
+      const v24B = views24hMap[b.id] || 0;
+      if (v24B !== v24A) return v24B - v24A;
+      return (b.downloads || 0) - (a.downloads || 0);
+    });
+
+    const chosenTopRated: Anime | null = ratingCandidates[0] || null;
+    if (chosenTopRated) {
+      selectedIds.add(chosenTopRated.id);
+    }
+
+    // C. TRES (3) ANIMES MÁS POPULARES EN LAS ÚLTIMAS 24 HORAS
+    const popularCandidates = visibleAnimes.filter(a => !selectedIds.has(a.id));
+    popularCandidates.sort((a, b) => {
+      // 1. Vistas dentro del ciclo de 24 horas
+      const v24A = views24hMap[a.id] || 0;
+      const v24B = views24hMap[b.id] || 0;
+      if (v24B !== v24A) return v24B - v24A;
+
+      // 2. Total de descargas / reproducciones
+      const dlA = a.downloads || 0;
+      const dlB = b.downloads || 0;
+      if (dlB !== dlA) return dlB - dlA;
+
+      // 3. Fecha reciente
+      const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+      const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+      return timeB - timeA;
+    });
+
+    const chosenPopular: Anime[] = popularCandidates.slice(0, 3);
+    chosenPopular.forEach(a => selectedIds.add(a.id));
+
+    // Composición: 3 más populares + 1 de mejor calificación + 2 con nuevos episodios
+    const result: Anime[] = [];
+    result.push(...chosenPopular);
+    if (chosenTopRated) result.push(chosenTopRated);
+    result.push(...chosenNewEpisodes);
+
+    // Si aún hay menos de 6 y la base de datos tiene más disponibles, completar sin duplicar
+    if (result.length < 6 && visibleAnimes.length > result.length) {
+      for (const an of visibleAnimes) {
+        if (result.length >= 6) break;
+        if (!result.some(r => r.id === an.id)) {
+          result.push(an);
         }
       }
     }
 
-    for (let i = 0; i < genres.length; i++) {
-      const g = genres[i];
-      if (genreUsageMap[g.id]) {
-        genreDownloadsMap[g.id] = (genreDownloadsMap[g.id] || 0) + (genreUsageMap[g.id] || 0) * 10;
-      }
-    }
-
-    const scored = visibleAnimes.map((anime, idx) => {
-      const dlScore = (anime.downloads || 0) * 100000;
-      const sIds = (anime.studioIds && anime.studioIds.length > 0)
-        ? anime.studioIds
-        : (anime.studioId ? [anime.studioId] : []);
-      const sScore = sIds.reduce((acc, sid) => acc + (studioDownloadsMap[sid] || 0) * 100 + (studioCountMap[sid] || 0) * 10, 0);
-      const gScore = (anime.genreIds || []).reduce((acc, gid) => acc + (genreDownloadsMap[gid] || 0) + (genreCountMap[gid] || 0), 0);
-      const totalScore = dlScore + sScore + gScore;
-      return { anime, totalScore, originalIndex: idx };
-    });
-
-    const popularOnly = scored.filter(item => (item.anime.downloads || 0) > 0);
-    popularOnly.sort((a, b) => {
-      if ((b.anime.downloads || 0) !== (a.anime.downloads || 0)) {
-        return (b.anime.downloads || 0) - (a.anime.downloads || 0);
-      }
-      if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
-      return a.originalIndex - b.originalIndex;
-    });
-
-    // Selecciona los más populares para el carrusel hero estilo Crunchyroll (hasta 6 animes destacados)
-    const finalTop = popularOnly.length >= 3
-      ? popularOnly
-      : (popularOnly.length > 0
-          ? [...popularOnly, ...scored.filter(s => !popularOnly.some(p => p.anime.id === s.anime.id))]
-          : scored);
-
-    return finalTop.slice(0, 6).map(item => item.anime);
-  }, [animes, studios, genres, genreUsageMap]);
+    return result;
+  }, [animes, ratingVersion]);
 
   // Render Section Selector helper
   const scrollToExplore = () => {
@@ -2076,7 +2162,7 @@ export default function App() {
         {/* Crunchyroll-Style Hero Banner Carousel for Más Populares */}
         <section aria-label="Animes Más Populares" className="w-full no-swipe">
           <PopularHeroCarousel
-            animes={top3Animes}
+            animes={heroFeaturedAnimes}
             studios={studios}
             genres={genres}
             onSelectAnime={(animeId) => navigateTo('detail', animeId)}
