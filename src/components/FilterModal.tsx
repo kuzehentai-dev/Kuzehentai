@@ -77,10 +77,24 @@ function FilterModal({
 }: FilterModalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Cada vez que se abre el modal, se posiciona en el inicio (hasta Calificaciones)
+  // Cada vez que se abre el modal, se posiciona en el inicio (visible hasta Estado)
   useEffect(() => {
-    if (isOpen && scrollRef.current) {
-      scrollRef.current.scrollTop = 0;
+    if (isOpen) {
+      const resetScroll = () => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = 0;
+        }
+      };
+      resetScroll();
+      requestAnimationFrame(resetScroll);
+      const t1 = setTimeout(resetScroll, 20);
+      const t2 = setTimeout(resetScroll, 80);
+      const t3 = setTimeout(resetScroll, 220);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
     }
   }, [isOpen]);
 
@@ -124,7 +138,10 @@ function FilterModal({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 16, scale: 0.96 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="relative w-full max-w-[460px] bg-[#110822] border border-[#2e174e] rounded-2xl shadow-2xl flex flex-col overflow-hidden max-h-[82vh] sm:max-h-[85vh] z-10"
+            onAnimationComplete={() => {
+              if (scrollRef.current) scrollRef.current.scrollTop = 0;
+            }}
+            className="relative w-full max-w-[460px] bg-[#110822] border border-[#2e174e] rounded-2xl shadow-2xl flex flex-col overflow-hidden h-[380px] max-h-[75vh] z-10"
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3.5 border-b border-[#26133f] bg-[#110822] shrink-0">

@@ -1,5 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Anime } from '../types';
+import { saveCoverToIDB, getAllCoversFromIDB } from '../lib/idbStorage';
+
+// In-memory lookup map populated permanently from IndexedDB for zero-latency 0ms access
+export const globalCoverDataMap = new Map<string, string>();
+
+if (typeof window !== 'undefined') {
+  getAllCoversFromIDB().then(covers => {
+    Object.entries(covers).forEach(([id, dataUrl]) => {
+      globalCoverDataMap.set(id, dataUrl);
+      globalLoadedAnimeIds.add(id);
+    });
+  }).catch(() => {});
+}
 
 // Inline SVG generator for front-end fallback (100% fail-proof encoding)
 export function getFallbackSvg(title?: string, studioName?: string): string {
@@ -44,13 +57,73 @@ export function getFallbackSvg(title?: string, studioName?: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
+// Generate dominant placeholder gradient for zero-layout-shift and blur-up
+export function getDominantPlaceholderGradient(title?: string, id?: string): string {
+  const str = (id || title || 'default');
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const gradients = [
+    'from-[#190a2a] via-[#10061e] to-[#0a0414]',
+    'from-[#240a1d] via-[#150512] to-[#0a0208]',
+    'from-[#0c1329] via-[#080d1e] to-[#040610]',
+    'from-[#1a1208] via-[#100b05] to-[#080502]',
+    'from-[#180a18] via-[#0f060f] to-[#070307]',
+  ];
+  return gradients[Math.abs(hash) % gradients.length];
+}
+
+export function persistCoverLocally(animeId?: string, src?: string) {
+  if (!animeId || !src) return;
+  if (src.startsWith('data:image/')) {
+    globalCoverDataMap.set(animeId, src);
+    globalLoadedAnimeIds.add(animeId);
+    saveCoverToIDB(animeId, src);
+    return;
+  }
+  if (typeof window !== 'undefined' && (src.startsWith('/') || src.startsWith('http'))) {
+    fetch(src, { cache: 'force-cache' })
+      .then(res => {
+        if (!res.ok) return null;
+        return res.blob();
+      })
+      .then(blob => {
+        if (!blob) return;
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const resData = reader.result as string;
+          if (resData && resData.startsWith('data:image/')) {
+            globalCoverDataMap.set(animeId, resData);
+            globalLoadedAnimeIds.add(animeId);
+            saveCoverToIDB(animeId, resData);
+          }
+        };
+        reader.readAsDataURL(blob);
+      })
+      .catch(() => {});
+  }
+}
+
 export function processImageSrc(anime: Partial<Anime>, studioName: string = 'Estudio'): string {
   try {
+    // 0. Persistent IndexedDB / Memory Cache (0ms Instant Load, Zero Network Requests)
+    if (anime.id && globalCoverDataMap.has(anime.id)) {
+      return globalCoverDataMap.get(anime.id)!;
+    }
     // 1. Base64 coverData from memory: 0ms INSTANT load with zero network roundtrips!
     if (anime.coverData && anime.coverData.startsWith('data:image/')) {
+      if (anime.id) {
+        globalCoverDataMap.set(anime.id, anime.coverData);
+        saveCoverToIDB(anime.id, anime.coverData);
+      }
       return anime.coverData;
     }
     if (anime.image && anime.image.startsWith('data:image/')) {
+      if (anime.id) {
+        globalCoverDataMap.set(anime.id, anime.image);
+        saveCoverToIDB(anime.id, anime.image);
+      }
       return anime.image;
     }
     // 2. HTTP cover URL as secondary path
@@ -66,20 +139,92 @@ export function processImageSrc(anime: Partial<Anime>, studioName: string = 'Est
   return getFallbackSvg(anime.name, studioName);
 }
 
+// Persisted cache of loaded anime IDs across navigation and reloads
+const loadPersistedCoverIds = (): Set<string> => {
+  const set = new Set<string>();
+  if (typeof window === 'undefined') return set;
+  try {
+    const raw = localStorage.getItem('kh_persisted_loaded_covers');
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        arr.forEach((id: string) => set.add(id));
+      }
+    }
+  } catch {}
+  return set;
+};
+
 export const globalImageCache = new Set<string>();
-export const globalLoadedAnimeIds = new Set<string>();
+export const globalLoadedAnimeIds = loadPersistedCoverIds();
 export const globalPreloadedImages = new Map<string, HTMLImageElement>();
+
+// Debounced persistence of loaded cover IDs to localStorage
+let persistTimeout: any = null;
+export function markAnimeCoverLoaded(animeId?: string, src?: string) {
+  let changed = false;
+  if (animeId && !globalLoadedAnimeIds.has(animeId)) {
+    globalLoadedAnimeIds.add(animeId);
+    changed = true;
+  }
+  if (src && !globalImageCache.has(src)) {
+    globalImageCache.add(src);
+  }
+  if (animeId && src) {
+    persistCoverLocally(animeId, src);
+  }
+
+  if (changed && typeof window !== 'undefined') {
+    if (persistTimeout) clearTimeout(persistTimeout);
+    persistTimeout = setTimeout(() => {
+      try {
+        const ids = Array.from(globalLoadedAnimeIds);
+        // Keep the latest 500 loaded IDs
+        const toSave = ids.length > 500 ? ids.slice(ids.length - 500) : ids;
+        localStorage.setItem('kh_persisted_loaded_covers', JSON.stringify(toSave));
+      } catch {}
+    }, 400);
+  }
+}
+
+// Background cache in persistent Cache Storage API if available
+export async function cacheInCacheStorage(src: string) {
+  if (typeof window === 'undefined' || !window.caches || !src || !src.startsWith('/')) return;
+  try {
+    const cache = await window.caches.open('kh-anime-covers-v1');
+    const match = await cache.match(src);
+    if (!match) {
+      const res = await fetch(src, { cache: 'force-cache' });
+      if (res.ok) {
+        await cache.put(src, res);
+      }
+    }
+  } catch {}
+}
 
 /**
  * Preloads a single anime cover and pins it in browser memory
  */
-export function preloadAnimeCover(anime: Partial<Anime>, studioName: string = 'Estudio'): Promise<string> {
+export function preloadAnimeCover(
+  anime: Partial<Anime>, 
+  studiosOrStudioName: { id: string; name: string }[] | string = 'Estudio',
+  highPriority: boolean = false
+): Promise<string> {
+  let studioName = 'Estudio';
+  if (typeof studiosOrStudioName === 'string') {
+    studioName = studiosOrStudioName;
+  } else if (Array.isArray(studiosOrStudioName)) {
+    const sIds = (anime.studioIds && anime.studioIds.length > 0)
+      ? anime.studioIds
+      : (anime.studioId ? [anime.studioId] : []);
+    studioName = studiosOrStudioName.find(s => sIds.includes(s.id))?.name || 'Estudio';
+  }
+
   const src = processImageSrc(anime, studioName);
   if (!src) return Promise.resolve('');
 
   if (globalImageCache.has(src) || src.startsWith('data:') || (anime.id && globalLoadedAnimeIds.has(anime.id))) {
-    globalImageCache.add(src);
-    if (anime.id) globalLoadedAnimeIds.add(anime.id);
+    markAnimeCoverLoaded(anime.id, src);
     return Promise.resolve(src);
   }
 
@@ -90,9 +235,12 @@ export function preloadAnimeCover(anime: Partial<Anime>, studioName: string = 'E
   return new Promise((resolve) => {
     const img = new Image();
     img.decoding = 'async';
+    // @ts-ignore
+    if (highPriority && 'fetchPriority' in img) img.fetchPriority = 'high';
+
     img.onload = () => {
-      globalImageCache.add(src);
-      if (anime.id) globalLoadedAnimeIds.add(anime.id);
+      markAnimeCoverLoaded(anime.id, src);
+      cacheInCacheStorage(src);
       resolve(src);
     };
     img.onerror = () => {
@@ -100,8 +248,8 @@ export function preloadAnimeCover(anime: Partial<Anime>, studioName: string = 'E
         const fallbackSrc = `/covers/${anime.id}.webp`;
         const fbImg = new Image();
         fbImg.onload = () => {
-          globalImageCache.add(fallbackSrc);
-          if (anime.id) globalLoadedAnimeIds.add(anime.id);
+          markAnimeCoverLoaded(anime.id, fallbackSrc);
+          cacheInCacheStorage(fallbackSrc);
           resolve(fallbackSrc);
         };
         fbImg.onerror = () => resolve(src);
@@ -117,16 +265,135 @@ export function preloadAnimeCover(anime: Partial<Anime>, studioName: string = 'E
 }
 
 /**
- * Eagerly preloads an entire list of animes into memory cache
+ * Intelligent Hover & Proximity Prefetching:
+ * Called on mouseEnter, pointerEnter, or touchStart to preload full images,
+ * episodes thumbnails, and metadata in 0ms before the user even clicks!
+ */
+const prefetchedAnimeIds = new Set<string>();
+export function prefetchAnime(
+  anime: Partial<Anime>,
+  studios: { id: string; name: string }[] = []
+) {
+  if (!anime || !anime.id || prefetchedAnimeIds.has(anime.id)) return;
+  prefetchedAnimeIds.add(anime.id);
+
+  // 1. High priority preload for the anime cover
+  preloadAnimeCover(anime, studios, true);
+
+  // 2. Preload episode thumbnails if available
+  if (anime.episodes && Array.isArray(anime.episodes)) {
+    anime.episodes.forEach(ep => {
+      if (ep.coverImage && !globalImageCache.has(ep.coverImage)) {
+        const epImg = new Image();
+        epImg.decoding = 'async';
+        epImg.onload = () => {
+          globalImageCache.add(ep.coverImage!);
+          cacheInCacheStorage(ep.coverImage!);
+        };
+        epImg.src = ep.coverImage;
+      }
+    });
+  }
+}
+
+/**
+ * Preloads a list of animes safely
  */
 export function preloadAllAnimes(items: Partial<Anime>[], studios: { id: string; name: string }[] = []) {
   if (!items || items.length === 0) return;
   items.forEach(anime => {
-    const sIds = (anime.studioIds && anime.studioIds.length > 0)
-      ? anime.studioIds
-      : (anime.studioId ? [anime.studioId] : []);
-    const studioName = studios.find(s => sIds.includes(s.id))?.name || 'Estudio';
-    preloadAnimeCover(anime, studioName);
+    preloadAnimeCover(anime, studios, false);
+  });
+}
+
+/**
+ * Preloads a specific catalog page (useful when hovering pagination buttons)
+ */
+export function prefetchCatalogPage(
+  items: Partial<Anime>[],
+  pageNumber: number,
+  itemsPerPage: number = 30,
+  studios: { id: string; name: string }[] = []
+) {
+  const start = (pageNumber - 1) * itemsPerPage;
+  const pageItems = items.slice(start, start + itemsPerPage);
+  if (pageItems.length > 0) {
+    pageItems.forEach(anime => preloadAnimeCover(anime, studios, true));
+  }
+}
+
+/**
+ * Two-stage prioritized loading pipeline:
+ * Stage 1: Immediate high-priority load for recent episodes + Catalog Page 1
+ * Stage 2: Gentle, non-blocking background preloading for all remaining catalog pages!
+ */
+let isBackgroundQueueRunning = false;
+let pendingCatalogQueue: Partial<Anime>[] = [];
+let catalogStudiosRef: { id: string; name: string }[] = [];
+
+export function startPrioritizedAppLoading(
+  animes: Partial<Anime>[],
+  studios: { id: string; name: string }[] = [],
+  episodeThumbnails: string[] = []
+) {
+  if (!animes || animes.length === 0) return;
+  catalogStudiosRef = studios;
+
+  // STAGE 1: Immediate high priority for initial screen (episodes + page 1 of catalog)
+  if (episodeThumbnails.length > 0) {
+    episodeThumbnails.forEach(thumbUrl => {
+      if (thumbUrl && !globalImageCache.has(thumbUrl)) {
+        const img = new Image();
+        img.decoding = 'async';
+        // @ts-ignore
+        if ('fetchPriority' in img) img.fetchPriority = 'high';
+        img.onload = () => {
+          globalImageCache.add(thumbUrl);
+          cacheInCacheStorage(thumbUrl);
+        };
+        img.src = thumbUrl;
+        globalPreloadedImages.set(thumbUrl, img);
+      }
+    });
+  }
+
+  // Preload first 30 animes (Page 1) with high priority
+  const firstPage = animes.slice(0, 30);
+  firstPage.forEach(anime => {
+    preloadAnimeCover(anime, studios, true);
+  });
+
+  // STAGE 2: Gentle background queue for remaining catalog covers (page 2+)
+  pendingCatalogQueue = animes.slice(30);
+
+  if (!isBackgroundQueueRunning && pendingCatalogQueue.length > 0) {
+    isBackgroundQueueRunning = true;
+    setTimeout(() => {
+      processNextBackgroundBatch();
+    }, 400);
+  }
+}
+
+function processNextBackgroundBatch() {
+  if (pendingCatalogQueue.length === 0) {
+    isBackgroundQueueRunning = false;
+    return;
+  }
+
+  const scheduleNext = () => {
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      (window as any).requestIdleCallback(() => processNextBackgroundBatch(), { timeout: 500 });
+    } else {
+      setTimeout(processNextBackgroundBatch, 80);
+    }
+  };
+
+  // Preload 4 images per gentle background batch
+  const batch = pendingCatalogQueue.splice(0, 4);
+  Promise.all(
+    batch.map(anime => preloadAnimeCover(anime, catalogStudiosRef, false))
+  ).finally(() => {
+    scheduleNext();
   });
 }
 
@@ -150,21 +417,25 @@ export function SmartAnimeCover({
   const initialSrc = processImageSrc(anime, studioName);
   const [imageSrc, setImageSrc] = useState<string>(initialSrc);
   const [retryCount, setRetryCount] = useState<number>(0);
+  const [hasFailed, setHasFailed] = useState<boolean>(false);
   const imgRef = useRef<HTMLImageElement | null>(null);
   
-  // Instant resolution if in memory cache, data URL, or preloaded
+  // Instant resolution if already in memory cache, localStorage loaded IDs, IndexedDB map, or preloaded
   const isInstant = Boolean(
     initialSrc.startsWith('data:') || 
+    (anime.id && globalCoverDataMap.has(anime.id)) ||
     globalImageCache.has(initialSrc) || 
     (anime.id && globalLoadedAnimeIds.has(anime.id))
   );
   const [isLoaded, setIsLoaded] = useState<boolean>(isInstant);
 
+  // Dominant color placeholder gradient
+  const placeholderGradient = getDominantPlaceholderGradient(anime.name, anime.id);
+
   useEffect(() => {
-    // Si la imagen ya está en caché del navegador y completó su carga, marcar instantáneo inmediatamente
+    // If image is already complete in browser cache, mark instantly with 0ms delay
     if (imgRef.current && (imgRef.current.complete || imgRef.current.naturalWidth > 0)) {
-      globalImageCache.add(imageSrc);
-      if (anime.id) globalLoadedAnimeIds.add(anime.id);
+      markAnimeCoverLoaded(anime.id, imageSrc);
       setIsLoaded(true);
     }
   }, [imageSrc, anime.id]);
@@ -174,6 +445,7 @@ export function SmartAnimeCover({
     if (src !== imageSrc) {
       setImageSrc(src);
       setRetryCount(0);
+      setHasFailed(false);
       const instant = src.startsWith('data:') || globalImageCache.has(src) || (anime.id ? globalLoadedAnimeIds.has(anime.id) : false);
       setIsLoaded(Boolean(instant));
     } else if (src.startsWith('data:') || globalImageCache.has(src) || (anime.id && globalLoadedAnimeIds.has(anime.id))) {
@@ -182,9 +454,9 @@ export function SmartAnimeCover({
   }, [anime.image, anime.coverData, anime.id, studioName, imageSrc]);
 
   const handleLoad = () => {
-    globalImageCache.add(imageSrc);
-    if (anime.id) globalLoadedAnimeIds.add(anime.id);
+    markAnimeCoverLoaded(anime.id, imageSrc);
     setIsLoaded(true);
+    setHasFailed(false);
   };
 
   const handleError = () => {
@@ -210,15 +482,18 @@ export function SmartAnimeCover({
     const svgFallback = getFallbackSvg(anime.name, studioName);
     setImageSrc(svgFallback);
     setIsLoaded(true);
+    setHasFailed(true);
   };
 
-  const fallbackBackground = getFallbackSvg(anime.name, studioName);
-
   return (
-    <div 
-      className="w-full h-full bg-neutral-900 bg-cover bg-center relative overflow-hidden" 
-      style={{ backgroundImage: `url("${fallbackBackground}")` }}
-    >
+    <div className={`w-full h-full relative overflow-hidden select-none bg-gradient-to-b ${placeholderGradient}`}>
+      {/* Blur-up placeholder with gentle shimmer when not yet loaded */}
+      {!isLoaded && !hasFailed && (
+        <div className="absolute inset-0 bg-[#12091c]/80 backdrop-blur-xs flex items-center justify-center pointer-events-none">
+          <div className="w-full h-full bg-gradient-to-tr from-purple-950/40 via-transparent to-purple-800/20 animate-pulse" />
+        </div>
+      )}
+
       <img
         ref={imgRef}
         src={imageSrc}
@@ -228,13 +503,10 @@ export function SmartAnimeCover({
         referrerPolicy="no-referrer"
         onLoad={handleLoad}
         onError={handleError}
-        className={`${className} ${
-          isLoaded ? 'opacity-100' : 'opacity-0 transition-opacity duration-200 ease-out'
+        className={`${className} transition-opacity duration-300 ease-out ${
+          isLoaded ? 'opacity-100' : 'opacity-0'
         }`}
       />
-      {!isLoaded && (
-        <div className="absolute inset-0 z-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-pulse pointer-events-none" />
-      )}
     </div>
   );
 }

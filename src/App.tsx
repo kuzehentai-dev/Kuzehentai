@@ -5,7 +5,14 @@
 
 import React, { useState, useEffect, useRef, useMemo, useDeferredValue, useCallback } from 'react';
 import { Studio, Genre, Anime, normalizeAnimeYear } from './types';
-import { requestPersistentStorage, saveMyListToIDB, getMyListFromIDB, saveMyListAnimesToIDB } from './lib/idbStorage';
+import { 
+  requestPersistentStorage, 
+  saveMyListToIDB, 
+  getMyListFromIDB, 
+  saveMyListAnimesToIDB,
+  saveCatalogToIDB,
+  getCatalogFromIDB
+} from './lib/idbStorage';
 import { getStableDeviceId } from './lib/deviceFingerprint';
 import { auth, onAuthStateChanged, configureAuthPersistence, db, doc, getDoc, collection, getDocs } from './lib/firebase';
 import { User } from 'firebase/auth';
@@ -31,11 +38,26 @@ import FilterModal from './components/FilterModal';
 import StudioDetailModal from './components/StudioDetailModal';
 import AuthModal from './components/AuthModal';
 import UserProfileModal from './components/UserProfileModal';
+import { PWAInstallButton } from './components/PWAInstallButton';
 
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
-import { SmartAnimeCover, processImageSrc, globalImageCache, preloadAllAnimes, preloadAnimeCover, getFallbackSvg } from './utils/imageFallback';
+import { SmartAnimeCover, processImageSrc, globalImageCache, preloadAllAnimes, preloadAnimeCover, getFallbackSvg, startPrioritizedAppLoading, prefetchAnime, prefetchCatalogPage } from './utils/imageFallback';
 import { normalizeEpisodesList } from './utils/episodeUtils';
 import { getAnimeRatingStats } from './utils/ratingManager';
+
+const extractEpisodeThumbnails = (list: Anime[]): string[] => {
+  const result: string[] = [];
+  list.forEach(a => {
+    if (a.episodes) {
+      a.episodes.forEach(ep => {
+        if (ep.isNew && (ep.thumbnail || ep.coverImage)) {
+          result.push((ep.thumbnail || ep.coverImage)!);
+        }
+      });
+    }
+  });
+  return result;
+};
 import { 
   Search, Film, Info, Plus, ChevronDown, Check, Send, AlertCircle, 
   MapPin, Heart, ExternalLink, ShieldCheck, Shield, Zap, Lock, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
@@ -538,8 +560,11 @@ export default function App() {
               localStorage.setItem('hk_cached_genres', JSON.stringify(data.genres));
               localStorage.setItem('hk_cached_animes', JSON.stringify(normalizedAnimes));
             } catch (e) {}
-            // Eagerly prime all anime covers into memory cache
-            preloadAllAnimes(normalizedAnimes, data.studios);
+            // Permanent persistent save in IndexedDB (no 5MB quota limit, survives reloads without calling Firebase)
+            saveCatalogToIDB(normalizedAnimes, data.studios, data.genres);
+            // Prioritized startup load: episodes & catalog page 1 first, then background queue
+            const epThumbs = extractEpisodeThumbnails(normalizedAnimes);
+            startPrioritizedAppLoading(normalizedAnimes, data.studios, epThumbs);
             return;
           }
         }
@@ -678,7 +703,9 @@ export default function App() {
           sessionStorage.setItem('hk_cached_animes', JSON.stringify(loadedAnimes));
           localStorage.setItem('hk_cached_animes', JSON.stringify(loadedAnimes));
         } catch (e) {}
-        preloadAllAnimes(loadedAnimes, loadedStudios || studios);
+        saveCatalogToIDB(loadedAnimes, loadedStudios || studios, loadedGenres || genres);
+        const epThumbs = extractEpisodeThumbnails(loadedAnimes);
+        startPrioritizedAppLoading(loadedAnimes, loadedStudios || studios, epThumbs);
       }
     } catch (err) {
       console.warn('Sync status:', err);
@@ -687,16 +714,26 @@ export default function App() {
     }
   };
 
-  // Sync state once on startup & persist without periodic polling (content stays until page reload)
+  // Sync state once on startup: checks IndexedDB first to eliminate Firebase requests and loading delays!
   useEffect(() => {
-    // Only fetch if we don't already have animes loaded in state
-    if (animes.length === 0) {
-      fetchData(false);
-    } else {
-      setLoading(false);
-      // Prime memory cache with already loaded animes
-      preloadAllAnimes(animes, studios);
-    }
+    let isMounted = true;
+    getCatalogFromIDB().then(cached => {
+      if (!isMounted) return;
+      if (cached && Array.isArray(cached.animes) && cached.animes.length > 0) {
+        setAnimes(cached.animes);
+        if (cached.studios && cached.studios.length > 0) setStudios(cached.studios);
+        if (cached.genres && cached.genres.length > 0) setGenres(cached.genres);
+        setLoading(false);
+        const epThumbs = extractEpisodeThumbnails(cached.animes);
+        startPrioritizedAppLoading(cached.animes, cached.studios || studios, epThumbs);
+      } else {
+        fetchData(false);
+      }
+    }).catch(() => {
+      if (isMounted && animes.length === 0) {
+        fetchData(false);
+      }
+    });
 
     // Refresh only when explicit mutations occur (like admin edits or manual trigger)
     const handleManualRefresh = () => {
@@ -1333,9 +1370,27 @@ export default function App() {
   // Instantly restore exact scroll position when returning to catalog view
   useEffect(() => {
     if (currentPage === 'home' || currentPage === 'my-list') {
-      if (savedScrollPos.current > 0) {
-        window.scrollTo({ top: savedScrollPos.current, left: 0, behavior: 'instant' as ScrollBehavior });
-        savedScrollPos.current = 0;
+      const targetPos = savedScrollPos.current;
+      if (targetPos > 0) {
+        const restore = () => {
+          window.scrollTo({ top: targetPos, left: 0, behavior: 'instant' as ScrollBehavior });
+        };
+        // 1. Instant synchronous attempt
+        restore();
+        // 2. Next animation frame
+        requestAnimationFrame(restore);
+        // 3. Debounced layout passes to guarantee pixel accuracy
+        const t1 = setTimeout(restore, 20);
+        const t2 = setTimeout(restore, 80);
+        const t3 = setTimeout(() => {
+          restore();
+          savedScrollPos.current = 0;
+        }, 220);
+        return () => {
+          clearTimeout(t1);
+          clearTimeout(t2);
+          clearTimeout(t3);
+        };
       }
     }
   }, [currentPage]);
@@ -1349,8 +1404,8 @@ export default function App() {
     }
   }, [currentPage]);
 
-  // Selected anime lookup
-  const currentAnime = animes.find(a => a.id === selectedAnimeId);
+  // Selected anime lookup memoized for maximum fluidity
+  const currentAnime = useMemo(() => animes.find(a => a.id === selectedAnimeId), [animes, selectedAnimeId]);
 
   // --- Popularity Calculations for Studios, Genres and Top 3 Portadas ---
   const handleDownload = React.useCallback(async (animeId: string) => {
@@ -1550,7 +1605,7 @@ export default function App() {
             custom={navDirection}
             initial={(dir: number) => ({
               opacity: 0,
-              x: dir >= 0 ? '100%' : '-100%'
+              x: dir >= 0 ? 30 : -30
             })}
             animate={{
               opacity: 1,
@@ -1558,9 +1613,9 @@ export default function App() {
             }}
             exit={(dir: number) => ({
               opacity: 0,
-              x: dir >= 0 ? '-100%' : '100%'
+              x: dir >= 0 ? -30 : 30
             })}
-            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
             style={{ willChange: 'transform, opacity' }}
             className="w-full min-h-screen overflow-x-hidden"
           >
@@ -1602,7 +1657,7 @@ export default function App() {
             custom={navDirection}
             initial={(dir: number) => ({
               opacity: 0,
-              x: dir >= 0 ? '100%' : '-100%'
+              x: dir >= 0 ? 30 : -30
             })}
             animate={{
               opacity: 1,
@@ -1610,9 +1665,9 @@ export default function App() {
             }}
             exit={(dir: number) => ({
               opacity: 0,
-              x: dir >= 0 ? '-100%' : '100%'
+              x: dir >= 0 ? -30 : 30
             })}
-            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
             style={{ willChange: 'transform, opacity' }}
             onAnimationComplete={() => setIsDetailAnimating(false)}
             className="w-full min-h-screen overflow-x-hidden"
@@ -1714,6 +1769,7 @@ export default function App() {
 
                 {/* Right Top Auth / User Button */}
                 <div className="flex items-center gap-2">
+                  <PWAInstallButton />
                   {currentUser ? (
                     <div className="flex items-center gap-2">
                       {currentUser.email?.toLowerCase() === 'kuzeofc@gmail.com' && (
@@ -2205,6 +2261,9 @@ export default function App() {
                   <div
                     key={item.id}
                     onClick={() => navigateTo('detail', item.anime.id, item.episodeNumber)}
+                    onMouseEnter={() => prefetchAnime(item.anime, studios)}
+                    onPointerEnter={() => prefetchAnime(item.anime, studios)}
+                    onTouchStart={() => prefetchAnime(item.anime, studios)}
                     className="group relative aspect-video w-full rounded-xl overflow-hidden cursor-pointer transition-all duration-200 shadow-md select-none active:scale-[0.98] hover:opacity-95 outline-none border-0"
                   >
                     {/* Episode Thumbnail */}
@@ -2269,19 +2328,16 @@ export default function App() {
                   key={page}
                   custom={pageDirection}
                   initial={(dir: number) => ({
-                    opacity: 0,
-                    x: dir >= 0 ? '100%' : '-100%'
+                    x: dir >= 0 ? 15 : -15
                   })}
                   animate={{
-                    opacity: 1,
                     x: 0
                   }}
                   exit={(dir: number) => ({
-                    opacity: 0,
-                    x: dir >= 0 ? '-100%' : '100%'
+                    x: dir >= 0 ? -15 : 15
                   })}
-                  transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-                  style={{ willChange: 'transform, opacity' }}
+                  transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
+                  style={{ willChange: 'transform' }}
                   className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-0.5 sm:gap-1"
                 >
                   {currentPageItems.map((anime, idx) => (
@@ -2366,6 +2422,7 @@ export default function App() {
                           <button
                             key={pNum}
                             onClick={() => handlePageChange(pNum)}
+                            onMouseEnter={() => prefetchCatalogPage(sortedAnimes, pNum, ITEMS_PER_PAGE, studios)}
                             className={`px-2.5 sm:px-3.5 py-1.5 shrink-0 font-mono text-xs sm:text-sm tracking-wider transition-all duration-150 cursor-pointer select-none ${
                               isActive
                                 ? 'text-[#ff5588] font-extrabold scale-110'
@@ -2380,6 +2437,7 @@ export default function App() {
                       {/* Next Page Button */}
                       <button
                         onClick={() => handlePageChange(page + 1)}
+                        onMouseEnter={() => page < totalPages && prefetchCatalogPage(sortedAnimes, page + 1, ITEMS_PER_PAGE, studios)}
                         disabled={page === totalPages}
                         aria-label="Página siguiente"
                         className="p-2 shrink-0 text-white hover:text-[#ff5588] active:scale-95 disabled:opacity-20 disabled:hover:text-white disabled:cursor-not-allowed transition-colors cursor-pointer select-none"

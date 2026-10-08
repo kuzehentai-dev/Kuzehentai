@@ -6,9 +6,13 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
+    "gcp-build": "npm run build",
     "start": "node server.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",

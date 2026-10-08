@@ -4,9 +4,8 @@
  */
 
 import React, { useState } from 'react';
-import { motion } from 'motion/react';
 import { Anime, Studio } from '../types';
-import { SmartAnimeCover } from '../utils/imageFallback';
+import { SmartAnimeCover, prefetchAnime } from '../utils/imageFallback';
 
 interface GalleryCardProps {
   key?: string;
@@ -32,11 +31,20 @@ function GalleryCard({ anime, studios, onClick, index, isNewEpisodesMode, episod
         ? anime.episodes[anime.episodes.length - 1]?.number || anime.episodes.length
         : null);
 
+  // Proactive prefetch on hover/focus/pointer/touch
+  const handlePrefetch = () => {
+    prefetchAnime(anime, studios);
+  };
+
   return (
     <div className="h-full w-full">
       <div
         id={`anime-card-${anime.id}`}
         onClick={onClick}
+        onMouseEnter={handlePrefetch}
+        onPointerEnter={handlePrefetch}
+        onFocus={handlePrefetch}
+        onTouchStart={handlePrefetch}
         title={anime.name}
         className={`group relative cursor-pointer aspect-[2/3] w-full bg-[#0d0818] ${isNewEpisodesMode ? 'rounded-xl' : 'rounded-2xl'} overflow-hidden border border-[#23153c] hover:border-purple-500/70 hover:shadow-lg hover:shadow-purple-950/40 shadow-md touch-manipulation select-none active:scale-[0.96] hover:-translate-y-0.5 transition-all duration-200 block`}
       >

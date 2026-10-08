@@ -129,11 +129,8 @@ const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 // Health check endpoints for Cloud Run / proxy ingress
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-app.get('/healthz', (_req, res) => {
-  res.status(200).send('OK');
+app.get(['/api/health', '/health', '/healthz', '/_ah/health', '/ping'], (_req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Lazy dynamic sharp loader to prevent container start failure if C++ native bindings are missing
@@ -689,21 +686,30 @@ class DBService {
       if (!this.localDb.userLists) this.localDb.userLists = {};
 
       // Auto-normalize any anime years to full 4-digit format (2000s)
+      let hasYearChanges = false;
       for (const a of this.localDb.animes) {
         if (a.year) {
-          a.year = normalizeAnimeYear(a.year);
+          const norm = normalizeAnimeYear(a.year);
+          if (norm !== a.year) {
+            a.year = norm;
+            hasYearChanges = true;
+          }
         }
       }
 
-      this.saveLocal();
+      if (hasYearChanges) {
+        this.saveLocal();
+      }
     } catch (err) {
       console.error('Error al inicializar la base de datos local:', err);
       this.localDb = { studios: [], genres: [], animes: [] };
     }
     this.initialized = true;
 
-    // Immediately extract & auto-heal all cover files to disk
-    this.extractAllCoversToDisk();
+    // Asynchronously extract cover files to disk after boot without blocking startup
+    setTimeout(() => {
+      this.extractAllCoversToDisk();
+    }, 5000);
 
     // Asynchronously auto-optimize any existing covers that exceed 200 KB
     setTimeout(() => {
@@ -2926,7 +2932,11 @@ app.get('/api/bootstrap', async (req, res) => {
       };
     });
 
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    if (isAdmin) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=180, stale-while-revalidate=86400');
+    }
     res.json({
       studios,
       genres,
@@ -3643,8 +3653,16 @@ async function start() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor KuzeHentai iniciado exitosamente en el puerto ${PORT}`);
+  });
+
+  // Handle graceful shutdown for Cloud Run container lifecycle
+  process.on('SIGTERM', () => {
+    console.log('Received SIGTERM, shutting down gracefully...');
+    server.close(() => {
+      process.exit(0);
+    });
   });
 }
 

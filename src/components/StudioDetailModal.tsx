@@ -17,7 +17,7 @@ import {
   ArrowUpDown 
 } from 'lucide-react';
 import { getAnimeRatingStats } from '../utils/ratingManager';
-import { getFallbackSvg, preloadAllAnimes } from '../utils/imageFallback';
+import { getFallbackSvg, preloadAllAnimes, prefetchCatalogPage } from '../utils/imageFallback';
 import GalleryCard from './GalleryCard';
 
 interface StudioDetailModalProps {
@@ -42,7 +42,7 @@ export default function StudioDetailModal({
 }: StudioDetailModalProps) {
   const [sortBy, setSortBy] = useState<
     'name-asc' | 'name-desc' | 'rating-desc' | 'rating-asc' | 'date-desc' | 'date-asc'
-  >('name-asc');
+  >('date-desc');
   const [page, setPage] = useState(initialPage);
   const [pageDirection, setPageDirection] = useState<number>(1);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -77,13 +77,6 @@ export default function StudioDetailModal({
     });
   }, [studio, animes]);
 
-  // Eagerly preload all animes of this studio immediately on entry
-  useEffect(() => {
-    if (studioAnimes.length > 0) {
-      preloadAllAnimes(studioAnimes, studios);
-    }
-  }, [studioAnimes, studios]);
-
   // Total votes across all animes of this studio
   const totalVotes = useMemo(() => {
     return studioAnimes.reduce((sum, a) => {
@@ -105,10 +98,28 @@ export default function StudioDetailModal({
   // Studio cover image: studio.image or first anime cover
   const studioCover = studio.image || studioAnimes[0]?.coverData || studioAnimes[0]?.image;
 
-  // Sort studio animes based on user selection
+  // Sort studio animes based on user selection (defaults to newest date)
   const sortedStudioAnimes = useMemo(() => {
     const list = [...studioAnimes];
     return list.sort((a, b) => {
+      if (sortBy === 'date-desc') {
+        const yearA = parseInt(normalizeAnimeYear(a.year) || '0', 10) || 0;
+        const yearB = parseInt(normalizeAnimeYear(b.year) || '0', 10) || 0;
+        if (yearA !== yearB) return yearB - yearA;
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (timeA !== timeB) return timeB - timeA;
+        return (b.id || '').localeCompare(a.id || '');
+      }
+      if (sortBy === 'date-asc') {
+        const yearA = parseInt(normalizeAnimeYear(a.year) || '0', 10) || 0;
+        const yearB = parseInt(normalizeAnimeYear(b.year) || '0', 10) || 0;
+        if (yearA !== yearB) return yearA - yearB;
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (timeA !== timeB) return timeA - timeB;
+        return (a.id || '').localeCompare(b.id || '');
+      }
       if (sortBy === 'name-asc') {
         return a.name.localeCompare(b.name, 'es', { sensitivity: 'base' });
       }
@@ -131,22 +142,6 @@ export default function StudioDetailModal({
         const votesB = getAnimeRatingStats(b.id)?.totalVotes || 0;
         return votesA - votesB;
       }
-      if (sortBy === 'date-desc') {
-        const yearA = parseInt(normalizeAnimeYear(a.year) || '0', 10) || 0;
-        const yearB = parseInt(normalizeAnimeYear(b.year) || '0', 10) || 0;
-        if (yearA !== yearB) return yearB - yearA;
-        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return timeB - timeA;
-      }
-      if (sortBy === 'date-asc') {
-        const yearA = parseInt(normalizeAnimeYear(a.year) || '0', 10) || 0;
-        const yearB = parseInt(normalizeAnimeYear(b.year) || '0', 10) || 0;
-        if (yearA !== yearB) return yearA - yearB;
-        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return timeA - timeB;
-      }
       return 0;
     });
   }, [studioAnimes, sortBy]);
@@ -157,6 +152,13 @@ export default function StudioDetailModal({
     const startIndex = (page - 1) * ITEMS_PER_PAGE;
     return sortedStudioAnimes.slice(startIndex, startIndex + ITEMS_PER_PAGE);
   }, [sortedStudioAnimes, page]);
+
+  // Prioritize preloading the current visible page immediately, then remaining on idle
+  useEffect(() => {
+    if (currentStudioAnimes.length > 0) {
+      preloadAllAnimes(currentStudioAnimes, studios);
+    }
+  }, [currentStudioAnimes, studios]);
 
   const handlePageChange = (newPage: number) => {
     if (newPage < 1 || newPage > totalPages || newPage === page) return;
@@ -421,19 +423,16 @@ export default function StudioDetailModal({
                     key={page}
                     custom={pageDirection}
                     initial={(dir: number) => ({
-                      opacity: 0,
-                      x: dir >= 0 ? '100%' : '-100%'
+                      x: dir >= 0 ? 15 : -15
                     })}
                     animate={{
-                      opacity: 1,
                       x: 0
                     }}
                     exit={(dir: number) => ({
-                      opacity: 0,
-                      x: dir >= 0 ? '-100%' : '100%'
+                      x: dir >= 0 ? -15 : 15
                     })}
-                    transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-                    style={{ willChange: 'transform, opacity' }}
+                    transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
+                    style={{ willChange: 'transform' }}
                     className="grid grid-cols-3 gap-1.5 sm:gap-2.5 md:gap-3"
                   >
                     {currentStudioAnimes.map((item, index) => (
@@ -477,6 +476,7 @@ export default function StudioDetailModal({
                           <button
                             key={pNum}
                             onClick={() => handlePageChange(pNum)}
+                            onMouseEnter={() => prefetchCatalogPage(currentStudioAnimes, pNum, ITEMS_PER_PAGE, studios)}
                             className={`px-2.5 sm:px-3.5 py-1.5 shrink-0 font-mono text-xs sm:text-sm tracking-wider transition-all duration-150 cursor-pointer select-none ${
                               isActive
                                 ? 'text-[#ff5588] font-extrabold scale-110'
@@ -491,6 +491,7 @@ export default function StudioDetailModal({
                       {/* Next Page Button */}
                       <button
                         onClick={() => handlePageChange(page + 1)}
+                        onMouseEnter={() => page < totalPages && prefetchCatalogPage(currentStudioAnimes, page + 1, ITEMS_PER_PAGE, studios)}
                         disabled={page === totalPages}
                         aria-label="Página siguiente"
                         className="p-2 shrink-0 text-white hover:text-[#ff5588] active:scale-95 disabled:opacity-20 disabled:hover:text-white disabled:cursor-not-allowed transition-colors cursor-pointer select-none"

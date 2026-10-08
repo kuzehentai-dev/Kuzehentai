@@ -1,6 +1,14 @@
-// Safe PWA Service Worker for KH with 3-Layer Cover Cache
-const CACHE_NAME = 'kh-pwa-v5';
+// Ultra-Fast PWA Service Worker for KuzeHentai
+// Strategies:
+// 1. Cover Images: Cache-First (0ms load from Cache API)
+// 2. Catalog APIs (/api/bootstrap, /api/animes, etc.): Stale-While-Revalidate (0ms instant response + background refresh)
+// 3. Fonts & Static Assets: Cache-First
+// 4. Shell / Navigation: Stale-While-Revalidate with offline fallback
+
+const SHELL_CACHE_NAME = 'kh-shell-v7';
 const COVERS_CACHE_NAME = 'kh-anime-covers-v1';
+const API_CACHE_NAME = 'kh-api-cache-v1';
+const FONTS_CACHE_NAME = 'kh-fonts-v1';
 
 const PRECACHE_ASSETS = [
   '/',
@@ -21,7 +29,7 @@ const PRECACHE_ASSETS = [
 // Installation: precache shell assets
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
+    caches.open(SHELL_CACHE_NAME).then((cache) => {
       return cache.addAll(PRECACHE_ASSETS).catch(() => {});
     })
   );
@@ -34,7 +42,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) => {
       return Promise.all(
         keys
-          .filter((key) => key !== CACHE_NAME && key !== COVERS_CACHE_NAME)
+          .filter((key) => key !== SHELL_CACHE_NAME && key !== COVERS_CACHE_NAME && key !== API_CACHE_NAME && key !== FONTS_CACHE_NAME)
           .map((key) => caches.delete(key))
       );
     })
@@ -42,24 +50,43 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch handling: Capa 2 persistent Cache Storage for covers + passthrough for APIs/DB
+// Fetch handling
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  // Exclude non-GET, chrome extensions, and real-time database endpoints
+  // Exclude non-GET, Chrome extensions, and third-party Firebase/Supabase real-time traffic
   if (
     req.method !== 'GET' ||
     url.hostname.includes('firestore') ||
     url.hostname.includes('firebase') ||
     url.hostname.includes('supabase') ||
-    url.hostname.includes('googleapis.com') ||
+    url.hostname.includes('googleapis.com/identitytoolkit') ||
+    url.hostname.includes('securetoken.googleapis.com') ||
     url.protocol.startsWith('chrome-extension')
   ) {
     return;
   }
 
-  // Capa 2: Cover Image Caching Strategy (Pure Cache First: Once loaded, never re-downloads)
+  // 1. Google Fonts & Gstatic: Cache-First
+  if (url.hostname.includes('fonts.googleapis.com') || url.hostname.includes('fonts.gstatic.com')) {
+    event.respondWith(
+      caches.open(FONTS_CACHE_NAME).then((cache) => {
+        return cache.match(req).then((cachedResponse) => {
+          if (cachedResponse) return cachedResponse;
+          return fetch(req).then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              cache.put(req, networkResponse.clone());
+            }
+            return networkResponse;
+          }).catch(() => cachedResponse);
+        });
+      })
+    );
+    return;
+  }
+
+  // 2. Cover Images & Episode Thumbnails: Cache-First (Instant 0ms retrieval)
   const isImageCover = 
     req.destination === 'image' ||
     url.pathname.includes('/covers/') ||
@@ -70,7 +97,6 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       caches.open(COVERS_CACHE_NAME).then((cache) => {
         return cache.match(req).then((cachedResponse) => {
-          // Si la imagen ya fue cargada, entregarla inmediatamente sin volver a pedir descarga por la red
           if (cachedResponse) {
             return cachedResponse;
           }
@@ -88,37 +114,64 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Passthrough for dynamic non-cover API endpoints
+  // 3. Catalog API Endpoints: Stale-While-Revalidate (Instant 0ms cached data + silent background update)
+  const isCatalogApi = 
+    url.pathname === '/api/bootstrap' ||
+    url.pathname === '/api/animes' ||
+    url.pathname === '/api/studios' ||
+    url.pathname === '/api/genres';
+
+  if (isCatalogApi) {
+    event.respondWith(
+      caches.open(API_CACHE_NAME).then((cache) => {
+        return cache.match(req).then((cachedResponse) => {
+          // Launch background network fetch to revalidate
+          const fetchPromise = fetch(req)
+            .then((networkResponse) => {
+              if (networkResponse && networkResponse.status === 200) {
+                cache.put(req, networkResponse.clone());
+              }
+              return networkResponse;
+            })
+            .catch(() => cachedResponse);
+
+          // Return cached response instantly in 0ms if available, otherwise wait for network
+          return cachedResponse || fetchPromise;
+        });
+      })
+    );
+    return;
+  }
+
+  // Exclude admin, auth, and user mutations from caching
   if (url.pathname.startsWith('/api/')) {
     return;
   }
 
-  // Network-first strategy for dynamic HTML/JS/CSS assets to ensure fresh content
+  // 4. Shell & Static Scripts/Styles: Stale-While-Revalidate
   event.respondWith(
-    fetch(req)
-      .then((networkResponse) => {
-        if (
-          networkResponse &&
-          networkResponse.status === 200 &&
-          url.origin === self.location.origin
-        ) {
-          const responseClone = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(req, responseClone);
+    caches.open(SHELL_CACHE_NAME).then((cache) => {
+      return cache.match(req).then((cachedResponse) => {
+        const fetchPromise = fetch(req)
+          .then((networkResponse) => {
+            if (
+              networkResponse &&
+              networkResponse.status === 200 &&
+              url.origin === self.location.origin
+            ) {
+              cache.put(req, networkResponse.clone());
+            }
+            return networkResponse;
+          })
+          .catch(() => {
+            if (cachedResponse) return cachedResponse;
+            if (req.mode === 'navigate') {
+              return cache.match('/index.html');
+            }
           });
-        }
-        return networkResponse;
-      })
-      .catch(() => {
-        return caches.match(req).then((cachedResponse) => {
-          if (cachedResponse) {
-            return cachedResponse;
-          }
-          if (req.mode === 'navigate') {
-            return caches.match('/index.html');
-          }
-        });
-      })
+
+        return cachedResponse || fetchPromise;
+      });
+    })
   );
 });
-

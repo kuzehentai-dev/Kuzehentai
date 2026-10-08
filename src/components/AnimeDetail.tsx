@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Anime, Studio, Genre, normalizeAnimeYear } from '../types';
 import { ArrowLeft, Download, Plus, Check, Play, Pause, Volume2, VolumeX, X, Film, ExternalLink, Tv, Video, Maximize2, Minimize2, RotateCcw, RotateCw, FastForward, Maximize, Loader2, Sparkles, Eye, EyeOff, Star } from 'lucide-react';
-import { getFallbackSvg, processImageSrc, globalImageCache, SmartAnimeCover, preloadAnimeCover } from '../utils/imageFallback';
+import { getFallbackSvg, processImageSrc, globalImageCache, globalLoadedAnimeIds, SmartAnimeCover, preloadAnimeCover, prefetchAnime } from '../utils/imageFallback';
 import GlobalComments from './GlobalComments';
 import AnimeRatingModal from './AnimeRatingModal';
 import { getAnimeRatingStats, submitAnimeVote, RatingStats } from '../utils/ratingManager';
@@ -461,7 +461,11 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
   const initialSrc = processImageSrc(anime, studio?.name);
   const [imageSrc, setImageSrc] = useState<string>(initialSrc);
   const [retryCount, setRetryCount] = useState<number>(0);
-  const initialInstant = initialSrc.startsWith('data:') || globalImageCache.has(initialSrc);
+  const initialInstant = Boolean(
+    initialSrc.startsWith('data:') || 
+    globalImageCache.has(initialSrc) || 
+    (anime.id && globalLoadedAnimeIds.has(anime.id))
+  );
   const [isLoaded, setIsLoaded] = useState<boolean>(initialInstant);
   const posterImgRef = useRef<HTMLImageElement>(null);
 
@@ -470,9 +474,9 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
     if (src !== imageSrc) {
       setImageSrc(src);
       setRetryCount(0);
-      const instant = src.startsWith('data:') || globalImageCache.has(src);
-      setIsLoaded(instant);
-    } else if (src.startsWith('data:') || globalImageCache.has(src)) {
+      const instant = src.startsWith('data:') || globalImageCache.has(src) || (anime.id && globalLoadedAnimeIds.has(anime.id));
+      setIsLoaded(Boolean(instant));
+    } else if (src.startsWith('data:') || globalImageCache.has(src) || (anime.id && globalLoadedAnimeIds.has(anime.id))) {
       setIsLoaded(true);
     }
   }, [anime.image, anime.coverData, anime.id, studio?.name, imageSrc]);
@@ -939,6 +943,9 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
                                   window.location.href = `/?anime=${rec.id}`;
                                 }
                               }}
+                              onMouseEnter={() => prefetchAnime(rec, studios)}
+                              onPointerEnter={() => prefetchAnime(rec, studios)}
+                              onTouchStart={() => prefetchAnime(rec, studios)}
                               title={rec.name}
                               className="group relative aspect-[2/3] bg-neutral-900 rounded-xl overflow-hidden border border-[#272236] hover:border-brand-red/70 transition-all duration-300 hover:scale-[1.03] shadow-md hover:shadow-lg hover:shadow-brand-red/10 cursor-pointer block p-0 text-left"
                             >

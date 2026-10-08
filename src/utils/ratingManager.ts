@@ -172,9 +172,11 @@ export function getAnimeRatingStats(animeId: string): RatingStats {
         ratingsCache[animeId] = voteData;
       } catch {
         voteData = getInitialVotes();
+        ratingsCache[animeId] = voteData;
       }
     } else {
       voteData = getInitialVotes();
+      ratingsCache[animeId] = voteData;
     }
   }
 
