@@ -161,7 +161,7 @@ export default function PopularHeroCarousel({
 
   if (loading) {
     return (
-      <div className="w-full relative rounded-2xl sm:rounded-3xl overflow-hidden bg-[#0a0515] border border-[#2b1747]/60 aspect-[4/5] xs:aspect-[3/4] sm:aspect-[16/10] md:aspect-[16/9] lg:aspect-[2/1] min-h-[460px] sm:min-h-[520px] max-h-[660px] animate-pulse no-swipe">
+      <div className="w-full relative rounded-2xl sm:rounded-3xl overflow-hidden bg-[#0a0515] border border-[#2b1747]/60 aspect-[4/5.2] xs:aspect-[3/4.2] sm:aspect-[16/11] md:aspect-[16/9.5] lg:aspect-[16/8.5] min-h-[500px] sm:min-h-[560px] md:min-h-[590px] max-h-[710px] animate-pulse no-swipe">
         <div className="absolute inset-0 bg-gradient-to-t from-[#090514] via-[#090514]/30 to-transparent" />
         <div className="absolute bottom-5 left-5 right-5 space-y-2">
           <div className="h-6 w-52 bg-white/10 rounded-lg" />
@@ -192,7 +192,7 @@ export default function PopularHeroCarousel({
     >
       {/* Crunchyroll-Style Hero Banner Card */}
       <div
-        className="relative w-full rounded-2xl sm:rounded-3xl overflow-hidden bg-[#0a0515] border border-[#2b1747] shadow-xl shadow-black/70 aspect-[4/5] xs:aspect-[3/4] sm:aspect-[16/10] md:aspect-[16/9] lg:aspect-[2/1] min-h-[460px] sm:min-h-[520px] md:min-h-[550px] max-h-[660px] flex flex-col justify-end touch-pan-y cursor-grab active:cursor-grabbing no-swipe"
+        className="relative w-full rounded-2xl sm:rounded-3xl overflow-hidden bg-[#0a0515] border border-[#2b1747] shadow-xl shadow-black/70 aspect-[4/5.2] xs:aspect-[3/4.2] sm:aspect-[16/11] md:aspect-[16/9.5] lg:aspect-[16/8.5] min-h-[500px] sm:min-h-[560px] md:min-h-[590px] max-h-[710px] flex flex-col justify-end touch-pan-y cursor-grab active:cursor-grabbing no-swipe"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
