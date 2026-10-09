@@ -294,13 +294,19 @@ export default function AnimeDetail({ anime, studios, genres, animes, allAnimes,
   }, [isPlayerOpen, onBack]);
 
   // Compute episodes list and active episode with robust fallbacks
-  const isEmision = Boolean(
+  const isUpcoming = Boolean(
     anime.status && (
       anime.status === 'Próximamente' ||
-      anime.status.toLowerCase().includes('emisi')
+      anime.status.toLowerCase().includes('proximamente') ||
+      anime.status.toLowerCase().includes('próximamente')
     )
   );
-  const statusLabel = isEmision ? 'Emisión' : 'Finalizado';
+  const isEmision = Boolean(
+    !isUpcoming &&
+    anime.status &&
+    anime.status.toLowerCase().includes('emisi')
+  );
+  const statusLabel = isUpcoming ? 'Próximamente' : isEmision ? 'Emisión' : 'Finalizado';
 
   const displayEpisodes = useMemo(() => {
     if (anime.episodes && anime.episodes.length > 0) {

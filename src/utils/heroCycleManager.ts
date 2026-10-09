@@ -261,53 +261,32 @@ export function computeHeroFeaturedAnimes(animes: Anime[]): Anime[] {
 
   // -------------------------------------------------------------
   // REGLA 2: 1 ANIME CON MEJOR CALIFICACIÓN
-  // "Y lo mismo con el anime mejor calificado de las 24 horas si llegado
-  //  caso no hubo otro anime calificado en su tiempo dejen el que está como
-  //  mejor calificando, hasta que califiquen otro anime y pase a ser el mejor calificado."
+  // Sin permanencia forzada: se selecciona el anime con mejor calificación
+  // en tiempo real del catálogo (excluyendo los 3 más populares).
+  // Se mantiene como mejor calificado hasta que llegue otro anime con
+  // mejor calificación o sea superado por nuevas calificaciones.
   // -------------------------------------------------------------
-  // Calcular puntaje de calificación para cada anime candidato que no esté en el top 3
-  const computeScore = (animeId: string): number => {
-    const stats = getAnimeRatingStats(animeId);
-    if (stats.totalVotes === 0 && stats.average === 0) return 0;
-    return (stats.average > 0 ? stats.average * 1000 : 0) + (stats.totalVotes * 100);
-  };
-
-  // Buscar el mejor calificado actual en todo el catálogo
   const candidateAnimesForRating = visibleAnimes.filter(
     (a) => !state.popularAnimeIds.includes(a.id)
   );
 
-  let highestRatedCandidate = candidateAnimesForRating[0] || null;
-  let highestScore = -1;
+  candidateAnimesForRating.sort((a, b) => {
+    const statsA = getAnimeRatingStats(a.id);
+    const statsB = getAnimeRatingStats(b.id);
+    const scoreA = (statsA.average > 0 ? statsA.average * 1000 : 0) + (statsA.totalVotes * 100);
+    const scoreB = (statsB.average > 0 ? statsB.average * 1000 : 0) + (statsB.totalVotes * 100);
+    if (scoreB !== scoreA) return scoreB - scoreA;
+    if (statsB.average !== statsA.average) return statsB.average - statsA.average;
+    const dlA = a.downloads || 0;
+    const dlB = b.downloads || 0;
+    if (dlB !== dlA) return dlB - dlA;
+    return (b.episodes || []).length - (a.episodes || []).length;
+  });
 
-  for (const an of candidateAnimesForRating) {
-    const score = computeScore(an.id);
-    if (score > highestScore) {
-      highestScore = score;
-      highestRatedCandidate = an;
-    }
-  }
-
-  // Si ya teníamos un anime guardado como top rated y aún existe y no está en los populares:
-  const currentSavedTopRatedExists =
-    state.topRatedAnimeId &&
-    visibleAnimes.some((a) => a.id === state.topRatedAnimeId) &&
-    !state.popularAnimeIds.includes(state.topRatedAnimeId);
-
-  if (currentSavedTopRatedExists) {
-    const currentSavedScore = computeScore(state.topRatedAnimeId);
-    // Si hay otro anime con score estrictamente mayor que fue calificado y supera al actual:
-    if (highestRatedCandidate && highestScore > currentSavedScore && highestScore > 0) {
-      state.topRatedAnimeId = highestRatedCandidate.id;
-      state.topRatedScore = highestScore;
-      stateModified = true;
-    }
-    // De lo contrario, "dejen el que está como mejor calificando, hasta que califiquen otro"
-  } else {
-    // Si no había guardado o fue borrado/movido, establecer el mejor candidato disponible
-    if (highestRatedCandidate) {
-      state.topRatedAnimeId = highestRatedCandidate.id;
-      state.topRatedScore = Math.max(0, highestScore);
+  const bestRatedAnime = candidateAnimesForRating[0] || null;
+  if (bestRatedAnime) {
+    if (state.topRatedAnimeId !== bestRatedAnime.id) {
+      state.topRatedAnimeId = bestRatedAnime.id;
       stateModified = true;
     }
   }

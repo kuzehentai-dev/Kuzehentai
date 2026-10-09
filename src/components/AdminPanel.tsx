@@ -1426,7 +1426,12 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
     setAnimeGenresInput(initialGenreNames);
 
     const rawStatus = anime.status || 'Finalizado';
-    const cleanStatus = (rawStatus.toLowerCase().includes('emisi') || rawStatus === 'Próximamente') ? 'Emisión' : 'Finalizado';
+    let cleanStatus = 'Finalizado';
+    if (rawStatus === 'Próximamente' || rawStatus.toLowerCase() === 'próximamente' || rawStatus.toLowerCase() === 'proximamente') {
+      cleanStatus = 'Próximamente';
+    } else if (rawStatus.toLowerCase().includes('emisi')) {
+      cleanStatus = 'Emisión';
+    }
     setAnimeStatus(cleanStatus);
     setAnimeYear(anime.year || '');
     setAnimeDescription(anime.description || '');
@@ -1556,6 +1561,14 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
       const updated = [...prev];
       updated[index] = { ...updated[index], telegramUrl: value };
 
+      // Ensure the input element shows the tail end of the link
+      setTimeout(() => {
+        const inputEl = episodeInputRefs.current[index];
+        if (inputEl) {
+          inputEl.scrollLeft = inputEl.scrollWidth;
+        }
+      }, 0);
+
       // If a link/URL is pasted or entered
       if (urlVal.length > 8 || urlVal.startsWith('http') || urlVal.includes('archive.org')) {
         // Look for subsequent empty chapter fields after index
@@ -1563,26 +1576,25 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
         
         if (nextEmptyIdx !== -1) {
           // There are still empty chapter fields AFTER this index!
-          // Focus the next empty input field so the user can paste immediately without losing keyboard
+          // Immediately focus the next empty input field so the user can paste continuously without losing keyboard
           setTimeout(() => {
-            episodeInputRefs.current[nextEmptyIdx]?.focus();
-          }, 60);
+            const nextEl = episodeInputRefs.current[nextEmptyIdx];
+            if (nextEl) {
+              nextEl.focus();
+              nextEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+          }, 30);
         } else {
           // Check if there are ANY other empty chapter fields anywhere in the list
           const anyEmptyIdx = updated.findIndex((ep, i) => i !== index && (!ep.telegramUrl || ep.telegramUrl.trim() === ''));
           if (anyEmptyIdx !== -1) {
             setTimeout(() => {
-              episodeInputRefs.current[anyEmptyIdx]?.focus();
-            }, 60);
-          } else {
-            // NO MORE empty chapter fields remaining! All chapter inputs now have links.
-            // Dismiss/lower the keyboard automatically
-            setTimeout(() => {
-              (document.activeElement as HTMLElement)?.blur();
-              if (episodeInputRefs.current[index]) {
-                episodeInputRefs.current[index]?.blur();
+              const anyEl = episodeInputRefs.current[anyEmptyIdx];
+              if (anyEl) {
+                anyEl.focus();
+                anyEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
               }
-            }, 60);
+            }, 30);
           }
         }
       }
@@ -2963,18 +2975,37 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                     </div>
 
                     {/* Estado */}
-                    <div className="space-y-1">
+                    <div className="space-y-1.5">
                       <label className="font-mono text-[9px] text-neutral-400 uppercase tracking-widest block">
                         Estado
                       </label>
-                      <select
-                        value={animeStatus}
-                        onChange={(e) => setAnimeStatus(e.target.value)}
-                        className="w-full bg-[#050505] border border-dark-border focus:border-brand-red/50 rounded p-2 text-sm text-white outline-none transition-colors duration-300"
-                      >
-                        <option value="Finalizado">Finalizado</option>
-                        <option value="Emisión">Emisión</option>
-                      </select>
+                      <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#050505] border border-dark-border rounded-xl">
+                        {[
+                          { id: 'Finalizado', label: 'Finalizado' },
+                          { id: 'Emisión', label: 'Emisión' },
+                          { id: 'Próximamente', label: 'Próximamente' }
+                        ].map((st) => {
+                          const isActive = animeStatus === st.id;
+                          return (
+                            <button
+                              key={st.id}
+                              type="button"
+                              onClick={() => setAnimeStatus(st.id)}
+                              className={`py-2 px-1 text-xs rounded-lg font-medium transition-all cursor-pointer text-center select-none ${
+                                isActive
+                                  ? st.id === 'Próximamente'
+                                    ? 'bg-amber-500/20 border border-amber-500 text-amber-300 font-bold shadow-sm'
+                                    : st.id === 'Emisión'
+                                    ? 'bg-emerald-500/20 border border-emerald-500 text-emerald-300 font-bold shadow-sm'
+                                    : 'bg-purple-600/30 border border-purple-500 text-white font-bold shadow-sm'
+                                  : 'text-neutral-400 hover:text-white hover:bg-white/5 border border-transparent'
+                              }`}
+                            >
+                              {st.label}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
 
@@ -3081,7 +3112,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                         <div className="flex items-center gap-1.5 sm:gap-2 px-1 text-[9px] font-mono text-neutral-400 uppercase tracking-wider select-none">
                           <span className="w-11 sm:w-13 text-center">Nº</span>
                           <span className="flex-1">Enlace de video (.mp4)</span>
-                          <span className="w-8 text-center" title="Miniatura">Min</span>
+                          <span className="w-16 sm:w-20 text-center" title="Miniatura">Miniatura</span>
                           <span className="w-16 sm:w-20 text-center">Episodios</span>
                           <span className="w-7"></span>
                         </div>
@@ -3119,64 +3150,25 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                                     }
                                   }}
                                   placeholder="https://archive.org/.../video.mp4"
+                                  style={{ direction: ep.telegramUrl ? 'rtl' : 'ltr', textAlign: ep.telegramUrl ? 'right' : 'left' }}
                                   className="w-full h-8 bg-[#0a0a0a] border border-dark-border focus:border-emerald-500 rounded px-2 text-xs text-white placeholder-neutral-700 outline-none truncate font-mono"
                                 />
                               </div>
 
-                              {/* Botón Portada al lado del enlace: '+' si no hay, '✓' si está lista */}
-                              <label
-                                className={`h-8 px-2 shrink-0 flex items-center justify-center gap-1 rounded cursor-pointer transition-all border group select-none text-[10px] font-mono ${
-                                  ep.coverImage
-                                    ? 'bg-purple-950/50 border-purple-500/70 text-purple-300 hover:bg-purple-900/50 shadow-sm'
-                                    : 'bg-[#0a0a0a] border-dark-border hover:border-purple-500/60 text-neutral-400 hover:text-white'
-                                }`}
-                                title={ep.coverImage ? 'Portada lista (clic para cambiar, clic derecho para quitar)' : 'Agregar portada (sección inicio)'}
-                                onContextMenu={(e) => {
-                                  if (ep.coverImage) {
-                                    e.preventDefault();
-                                    setAnimeEpisodes(prev => {
-                                      const updated = [...prev];
-                                      updated[idx] = { ...updated[idx], coverImage: undefined };
-                                      return updated;
-                                    });
-                                    showNotification(`Portada removida del Episodio ${ep.number}`, 'success');
-                                  }
-                                }}
-                              >
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  className="hidden"
-                                  onChange={(e) => {
-                                    const file = e.target.files?.[0];
-                                    if (file) {
-                                      handleEpisodeCoverUpload(idx, file);
-                                      e.target.value = '';
-                                    }
-                                  }}
-                                />
-                                {ep.coverImage ? (
-                                  <Check className="h-3.5 w-3.5 text-purple-400 stroke-[2.5]" />
-                                ) : (
-                                  <Plus className="h-3.5 w-3.5 text-neutral-400 group-hover:text-purple-300 transition-colors" />
-                                )}
-                                <span className="hidden sm:inline">Portada</span>
-                              </label>
-
                               {/* Botón Miniatura al lado del enlace: '+' si no hay, '✓' si está lista */}
                               <label
                                 className={`h-8 px-2 shrink-0 flex items-center justify-center gap-1 rounded cursor-pointer transition-all border group select-none text-[10px] font-mono ${
-                                  ep.thumbnail
-                                    ? 'bg-emerald-950/50 border-emerald-500/70 text-emerald-300 hover:bg-emerald-900/50 shadow-sm'
-                                    : 'bg-[#0a0a0a] border-dark-border hover:border-emerald-500/60 text-neutral-400 hover:text-white'
+                                  (ep.thumbnail || ep.coverImage)
+                                    ? 'bg-purple-950/50 border-purple-500/70 text-purple-300 hover:bg-purple-900/50 shadow-sm'
+                                    : 'bg-[#0a0a0a] border-dark-border hover:border-purple-500/60 text-neutral-400 hover:text-white'
                                 }`}
-                                title={ep.thumbnail ? 'Miniatura lista (clic para cambiar, clic derecho para quitar)' : 'Agregar miniatura (reproductor e interna)'}
+                                title={(ep.thumbnail || ep.coverImage) ? 'Miniatura lista (clic para cambiar, clic derecho para quitar)' : 'Agregar miniatura del episodio'}
                                 onContextMenu={(e) => {
-                                  if (ep.thumbnail) {
+                                  if (ep.thumbnail || ep.coverImage) {
                                     e.preventDefault();
                                     setAnimeEpisodes(prev => {
                                       const updated = [...prev];
-                                      updated[idx] = { ...updated[idx], thumbnail: undefined };
+                                      updated[idx] = { ...updated[idx], thumbnail: undefined, coverImage: undefined };
                                       return updated;
                                     });
                                     showNotification(`Miniatura removida del Episodio ${ep.number}`, 'success');
@@ -3195,12 +3187,12 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                                     }
                                   }}
                                 />
-                                {ep.thumbnail ? (
-                                  <Check className="h-3.5 w-3.5 text-emerald-400 stroke-[2.5]" />
+                                {(ep.thumbnail || ep.coverImage) ? (
+                                  <Check className="h-3.5 w-3.5 text-purple-400 stroke-[2.5]" />
                                 ) : (
-                                  <Plus className="h-3.5 w-3.5 text-neutral-400 group-hover:text-emerald-300 transition-colors" />
+                                  <Plus className="h-3.5 w-3.5 text-neutral-400 group-hover:text-purple-300 transition-colors" />
                                 )}
-                                <span className="hidden sm:inline">Miniatura</span>
+                                <span className="inline">Miniatura</span>
                               </label>
 
                               {/* Interruptor pequeño: Verde cuando se muestra, sin color/neutral cuando no */}
@@ -4636,11 +4628,17 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                     <div className="flex items-baseline gap-2">
                       <span className="text-neutral-400 font-semibold shrink-0">Estado:</span>
                       <span className={`font-bold ${
-                        (selectedAnimeDetails.status?.toLowerCase().includes('emisi') || selectedAnimeDetails.status === 'Próximamente')
+                        selectedAnimeDetails.status === 'Próximamente' || selectedAnimeDetails.status?.toLowerCase() === 'próximamente'
+                          ? 'text-amber-400'
+                          : selectedAnimeDetails.status?.toLowerCase().includes('emisi')
                           ? 'text-emerald-400'
                           : 'text-neutral-300'
                       }`}>
-                        {(selectedAnimeDetails.status?.toLowerCase().includes('emisi') || selectedAnimeDetails.status === 'Próximamente') ? 'Emisión' : 'Finalizado'}
+                        {selectedAnimeDetails.status === 'Próximamente' || selectedAnimeDetails.status?.toLowerCase() === 'próximamente'
+                          ? 'Próximamente'
+                          : selectedAnimeDetails.status?.toLowerCase().includes('emisi')
+                          ? 'Emisión'
+                          : 'Finalizado'}
                       </span>
                     </div>
 

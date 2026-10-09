@@ -26,12 +26,15 @@ export default function PopularHeroCarousel({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
 
-  // Swipe / Drag detection
+  // Swipe / Drag and Tap detection
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
-  const isSwiping = useRef(false);
+  const touchStartTime = useRef<number>(0);
+  const touchMoved = useRef(false);
   const pointerStartX = useRef<number | null>(null);
+  const pointerStartY = useRef<number | null>(null);
   const hasMoved = useRef(false);
+  const lastActionTime = useRef<number>(0);
 
   const total = animes.length;
 
@@ -76,63 +79,85 @@ export default function PopularHeroCarousel({
     return st ? st.name : 'Estudio';
   }, [currentAnime, studios]);
 
-  // Show at most 2 genres with concise names
+  // Show at most 3 genres with concise names
   const genreNames = useMemo(() => {
     if (!currentAnime || !currentAnime.genreIds) return [];
     return currentAnime.genreIds
       .map((id) => genres.find((g) => g.id === id)?.name)
       .filter((n): n is string => Boolean(n))
-      .slice(0, 2);
+      .slice(0, 3);
   }, [currentAnime, genres]);
 
   const isSaved = currentAnime ? savedAnimeIds.includes(currentAnime.id) : false;
 
-  // Touch Swipe handlers for mobile
+  // Touch Swipe & Single-Tap handlers for mobile
   const handleTouchStart = (e: React.TouchEvent) => {
     setIsPaused(true);
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
-    isSwiping.current = true;
+    touchStartTime.current = Date.now();
+    touchMoved.current = false;
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (!isSwiping.current || touchStartX.current === null || touchStartY.current === null) return;
+    if (touchStartX.current === null || touchStartY.current === null) return;
     const currentX = e.touches[0].clientX;
     const currentY = e.touches[0].clientY;
     const deltaX = currentX - touchStartX.current;
     const deltaY = currentY - touchStartY.current;
 
-    // If user is mostly scrolling vertically, abort horizontal swipe
-    if (Math.abs(deltaY) > Math.abs(deltaX) && Math.abs(deltaY) > 25) {
-      isSwiping.current = false;
+    // Movement greater than 10px is considered swipe/drag, not a tap
+    if (Math.hypot(deltaX, deltaY) > 10) {
+      touchMoved.current = true;
     }
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
-    if (isSwiping.current && touchStartX.current !== null) {
-      const deltaX = (e.changedTouches[0]?.clientX || 0) - touchStartX.current;
-      if (deltaX < -35) {
-        handleNext();
-      } else if (deltaX > 35) {
-        handlePrev();
+    if (touchStartX.current !== null && touchStartY.current !== null) {
+      const endX = e.changedTouches[0]?.clientX ?? touchStartX.current;
+      const endY = e.changedTouches[0]?.clientY ?? touchStartY.current;
+      const deltaX = endX - touchStartX.current;
+      const deltaY = endY - touchStartY.current;
+      const distance = Math.hypot(deltaX, deltaY);
+      const duration = Date.now() - touchStartTime.current;
+
+      if (touchMoved.current && Math.abs(deltaX) > 35 && Math.abs(deltaX) > Math.abs(deltaY)) {
+        // Horizontal swipe to navigate carousel
+        if (deltaX < -35) {
+          handleNext();
+        } else if (deltaX > 35) {
+          handlePrev();
+        }
+      } else if (!touchMoved.current && distance <= 12 && duration < 500) {
+        // Direct intentional single-tap on mobile
+        const target = e.target as HTMLElement | null;
+        const isInteractive = target?.closest('button') !== null;
+        if (!isInteractive && currentAnime) {
+          lastActionTime.current = Date.now();
+          onSelectAnime(currentAnime.id);
+        }
       }
     }
+
     touchStartX.current = null;
     touchStartY.current = null;
-    isSwiping.current = false;
+    touchMoved.current = false;
     setIsPaused(false);
   };
 
-  // Mouse Drag handlers for desktop swipe
+  // Mouse Drag & Click handlers for desktop
   const handleMouseDown = (e: React.MouseEvent) => {
     pointerStartX.current = e.clientX;
+    pointerStartY.current = e.clientY;
     hasMoved.current = false;
     setIsPaused(true);
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (pointerStartX.current === null) return;
-    if (Math.abs(e.clientX - pointerStartX.current) > 10) {
+    if (pointerStartX.current === null || pointerStartY.current === null) return;
+    const deltaX = e.clientX - pointerStartX.current;
+    const deltaY = e.clientY - pointerStartY.current;
+    if (Math.hypot(deltaX, deltaY) > 8) {
       hasMoved.current = true;
     }
   };
@@ -147,14 +172,27 @@ export default function PopularHeroCarousel({
       }
     }
     pointerStartX.current = null;
-    hasMoved.current = false;
+    pointerStartY.current = null;
     setIsPaused(false);
   };
 
-  const handleCoverClick = () => {
-    // If the user just finished dragging, don't trigger navigation
-    if (hasMoved.current) return;
+  // Unified single click on card
+  const handleCardClick = (e: React.MouseEvent) => {
+    // Avoid double triggering if touchEnd handled it
+    if (Date.now() - lastActionTime.current < 450) {
+      return;
+    }
+    // If dragging on desktop, do not trigger navigation
+    if (hasMoved.current) {
+      hasMoved.current = false;
+      return;
+    }
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('button')) {
+      return;
+    }
     if (currentAnime) {
+      lastActionTime.current = Date.now();
       onSelectAnime(currentAnime.id);
     }
   };
@@ -192,7 +230,8 @@ export default function PopularHeroCarousel({
     >
       {/* Crunchyroll-Style Hero Banner Card */}
       <div
-        className="relative w-full rounded-2xl sm:rounded-3xl overflow-hidden bg-[#0a0515] border border-[#2b1747] shadow-xl shadow-black/70 aspect-[4/5.5] xs:aspect-[3/4.5] sm:aspect-[16/11.8] md:aspect-[16/10.2] lg:aspect-[16/9] min-h-[530px] sm:min-h-[595px] md:min-h-[625px] max-h-[750px] flex flex-col justify-end touch-pan-y cursor-grab active:cursor-grabbing no-swipe"
+        className="relative w-full rounded-2xl sm:rounded-3xl overflow-hidden bg-[#0a0515] border border-[#2b1747] shadow-xl shadow-black/70 aspect-[4/5.5] xs:aspect-[3/4.5] sm:aspect-[16/11.8] md:aspect-[16/10.2] lg:aspect-[16/9] min-h-[530px] sm:min-h-[595px] md:min-h-[625px] max-h-[750px] flex flex-col justify-end touch-pan-y cursor-pointer no-swipe"
+        onClick={handleCardClick}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -200,7 +239,7 @@ export default function PopularHeroCarousel({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
       >
-        {/* Animated Background Poster with Cross-fade */}
+        {/* Animated Background Poster with Cross-fade - Cover extends all the way to top */}
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.div
             key={currentAnime.id}
@@ -208,8 +247,7 @@ export default function PopularHeroCarousel({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.98 }}
             transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
-            className="absolute inset-0 w-full h-full"
-            onClick={handleCoverClick}
+            className="absolute inset-0 w-full h-full pointer-events-none"
           >
             <SmartAnimeCover
               anime={currentAnime}
@@ -217,22 +255,22 @@ export default function PopularHeroCarousel({
               alt={currentAnime.name}
               priority={true}
               loading="eager"
-              className="w-full h-full object-cover object-[center_20%] sm:object-[center_25%]"
+              className="w-full h-full object-cover object-[center_top] sm:object-[center_15%]"
             />
           </motion.div>
         </AnimatePresence>
 
-        {/* Soft, Transparent Overlays - Designed to let the anime cover stay clearly visible */}
-        {/* Bottom smooth gradient restricted to bottom 50% for high poster clarity */}
-        <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-[#090514] via-[#090514]/65 to-transparent pointer-events-none" />
+        {/* Soft, Transparent Overlays */}
+        {/* Top gradient to give contrast to top bar / icons */}
+        <div className="absolute inset-x-0 top-0 h-28 sm:h-36 bg-gradient-to-b from-black/80 via-black/40 to-transparent pointer-events-none z-[5]" />
+        {/* Bottom smooth gradient for high poster clarity and text readability */}
+        <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-[#090514] via-[#090514]/75 to-transparent pointer-events-none z-[5]" />
         {/* Subtle left side vignette for wide desktop displays */}
-        <div className="hidden sm:block absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-[#090514]/75 via-[#090514]/30 to-transparent pointer-events-none" />
-        {/* Subtle top shade */}
-        <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/50 to-transparent pointer-events-none" />
+        <div className="hidden sm:block absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-[#090514]/75 via-[#090514]/30 to-transparent pointer-events-none z-[5]" />
 
-        {/* Hero Content Overlay: Compact info to showcase cover */}
-        <div className="relative z-10 p-3.5 sm:p-5 md:p-6 flex flex-col justify-end space-y-1.5 sm:space-y-2 max-w-2xl">
-          {/* Anime Title: 1 line only so it leaves ample room for the cover */}
+        {/* Hero Content Overlay: Compact info at bottom with Anime Title and 3 Genres */}
+        <div className="relative z-10 p-3.5 sm:p-5 md:p-6 flex flex-col justify-end space-y-1.5 sm:space-y-2 max-w-2xl pointer-events-auto">
+          {/* Anime Title: In lower section where it was before */}
           <AnimatePresence mode="wait" initial={false}>
             <motion.h1
               key={`title-${currentAnime.id}`}
@@ -240,17 +278,16 @@ export default function PopularHeroCarousel({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.3, ease: 'easeOut' }}
-              onClick={handleCoverClick}
-              className="text-base sm:text-xl md:text-2xl font-display font-bold text-white tracking-tight leading-snug drop-shadow cursor-pointer hover:text-purple-300 transition-colors line-clamp-1"
+              className="text-base sm:text-xl md:text-2xl font-display font-bold text-white tracking-tight leading-snug drop-shadow hover:text-purple-300 transition-colors line-clamp-1"
               title={currentAnime.name}
             >
               {currentAnime.name}
             </motion.h1>
           </AnimatePresence>
 
-          {/* Small Genre Tags (maximum 2, small size) - Below title */}
+          {/* Small Genre Tags (3 genres, small size) - Below title */}
           {genreNames.length > 0 && (
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               {genreNames.map((gName, idx) => (
                 <span
                   key={idx}
@@ -274,7 +311,10 @@ export default function PopularHeroCarousel({
             {/* Primary Violet "VER AHORA" Button (matches recuadro violeta) */}
             <button
               type="button"
-              onClick={() => onSelectAnime(currentAnime.id)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectAnime(currentAnime.id);
+              }}
               className="inline-flex items-center justify-center gap-1.5 px-3.5 sm:px-4 py-1.5 sm:py-2 rounded-xl bg-gradient-to-r from-purple-700 to-purple-600 hover:from-purple-600 hover:to-purple-500 text-white font-mono font-bold text-[10px] sm:text-[11px] tracking-wider uppercase shadow-md border border-purple-400/40 active:scale-95 transition-all duration-200 cursor-pointer"
             >
               <Play className="w-3.5 h-3.5 fill-white text-white shrink-0" />

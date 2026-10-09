@@ -53,6 +53,7 @@ const STATUS_OPTIONS = [
   { id: '', label: 'Todos' },
   { id: 'Emisión', label: 'En emisión' },
   { id: 'Finalizado', label: 'Finalizado' },
+  { id: 'Próximamente', label: 'Próximamente' },
 ];
 
 function FilterModal({
