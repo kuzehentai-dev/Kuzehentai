@@ -6,85 +6,69 @@
 import { Anime } from '../types';
 import { getAnimeRatingStats } from './ratingManager';
 
-const STORAGE_KEY = 'kh_recommendations_48h_v1';
-const CYCLE_48H_MS = 48 * 60 * 60 * 1000; // 48 hours in milliseconds
+// In-memory per-user cache that stays active during normal browsing but cleanly resets on page restart/reload
+const memoryUserRecommendations = new Map<string, { cycleStartTime: number; animeIds: string[]; listSignature: string }>();
 
-interface RecommendationState {
-  cycleStartTime: number;
-  animeIds: string[];
-  seed: number;
-}
-
-function loadRecommendationState(): RecommendationState | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed.cycleStartTime === 'number' && Array.isArray(parsed.animeIds)) {
-        return parsed;
-      }
-    }
-  } catch {}
-  return null;
-}
-
-function saveRecommendationState(state: RecommendationState) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {}
-}
+const CYCLE_48H_MS = 48 * 60 * 60 * 1000; // 48 hours
 
 /**
- * Computes 10 recommended animes based on user preferences (genres, myList)
- * strictly excluding animes marked as watched, and rotating fresh picks every 48 hours.
+ * Computes 10 recommended animes personalized to the specific user's tastes (genres from myList & watched),
+ * strictly excluding animes marked as watched, and isolated per user account.
+ * When switching accounts, recommendations immediately adapt to the active user's taste.
  */
 export function getRecommendedAnimes(
   animes: Anime[],
   myListIds: string[] = [],
-  watchedIds: string[] = []
+  watchedIds: string[] = [],
+  userId?: string | null
 ): Anime[] {
   const watchedSet = new Set(watchedIds || []);
   const visibleAnimes = animes.filter((a) => !a.hidden && !watchedSet.has(a.id));
   if (visibleAnimes.length === 0) return [];
 
-  const now = Date.now();
-  let state = loadRecommendationState();
+  const accountKey = userId ? `user_${userId}` : 'guest';
+  // Signature representing the user's personal tastes
+  const listSignature = `${[...myListIds].sort().join(',')}|${[...watchedIds].sort().join(',')}`;
 
-  const isCycleExpired = !state || (now - state.cycleStartTime >= CYCLE_48H_MS);
+  const cached = memoryUserRecommendations.get(accountKey);
+  const now = Date.now();
+  const isCacheValid = cached &&
+    cached.listSignature === listSignature &&
+    (now - cached.cycleStartTime < CYCLE_48H_MS);
+
+  if (isCacheValid) {
+    const validAnimes: Anime[] = [];
+    for (const id of cached.animeIds) {
+      if (!watchedSet.has(id)) {
+        const found = visibleAnimes.find((a) => a.id === id);
+        if (found) validAnimes.push(found);
+      }
+    }
+    if (validAnimes.length >= Math.min(10, visibleAnimes.length)) {
+      return validAnimes.slice(0, 10);
+    }
+  }
 
   // 1. Analyze user favorite genres based on saved and watched animes
-  const userFavoriteAnimeIds = new Set([...myListIds, ...watchedIds]);
+  const myListSet = new Set(myListIds);
+  const watchedOnlySet = new Set(watchedIds);
   const genreFrequency: Record<string, number> = {};
 
   animes.forEach((a) => {
-    if (userFavoriteAnimeIds.has(a.id)) {
+    if (myListSet.has(a.id)) {
       (a.genreIds || []).forEach((gid) => {
-        genreFrequency[gid] = (genreFrequency[gid] || 0) + 3;
+        // High affinity for items in user's personal list
+        genreFrequency[gid] = (genreFrequency[gid] || 0) + 5;
+      });
+    } else if (watchedOnlySet.has(a.id)) {
+      (a.genreIds || []).forEach((gid) => {
+        // Moderate affinity for items the user has watched
+        genreFrequency[gid] = (genreFrequency[gid] || 0) + 2;
       });
     }
   });
 
-  // Also include general 24h view activity
-  try {
-    const rawViews = localStorage.getItem('kh_anime_views_24h');
-    if (rawViews) {
-      const viewList = JSON.parse(rawViews);
-      if (Array.isArray(viewList)) {
-        viewList.forEach((v: { animeId: string }) => {
-          if (v && v.animeId) {
-            const viewedAn = animes.find((a) => a.id === v.animeId);
-            if (viewedAn) {
-              (viewedAn.genreIds || []).forEach((gid) => {
-                genreFrequency[gid] = (genreFrequency[gid] || 0) + 1;
-              });
-            }
-          }
-        });
-      }
-    }
-  } catch {}
+  const hasSpecificTastes = Object.keys(genreFrequency).length > 0;
 
   // 2. Score every visible anime that is NOT watched
   const scoredAnimes = visibleAnimes.map((a) => {
@@ -94,44 +78,35 @@ export function getRecommendedAnimes(
     });
 
     const ratingStats = getAnimeRatingStats(a.id);
-    const ratingScore = (ratingStats.average > 0 ? ratingStats.average * 200 : 0) + (ratingStats.totalVotes * 20);
-    const downloadScore = (a.downloads || 0) * 0.5;
+    const ratingScore = (ratingStats.average > 0 ? ratingStats.average * 150 : 0) + (ratingStats.totalVotes * 15);
+    const downloadScore = (a.downloads || 0) * 0.4;
+    const epScore = (a.episodes || []).length > 0 ? 40 : 0;
 
-    // Small bonus if anime has episodes
-    const epScore = (a.episodes || []).length > 0 ? 50 : 0;
+    // Heavy boost if genres match the user's specific account taste
+    const tasteBonus = hasSpecificTastes ? (genreScore * 180) : 0;
 
     return {
       anime: a,
-      baseScore: genreScore * 100 + ratingScore + downloadScore + epScore,
+      baseScore: tasteBonus + ratingScore + downloadScore + epScore,
     };
   });
 
-  // If cycle is not expired, verify saved animes (excluding any newly watched)
-  if (!isCycleExpired && state && state.animeIds.length > 0) {
-    const currentList: Anime[] = [];
-    for (const id of state.animeIds) {
-      if (watchedSet.has(id)) continue;
-      const found = visibleAnimes.find((a) => a.id === id);
-      if (found) currentList.push(found);
-    }
-
-    if (currentList.length >= Math.min(10, visibleAnimes.length)) {
-      return currentList.slice(0, 10);
-    }
+  // Account-specific seed so different accounts with same generic taste get varied personalized picks
+  let accountSeed = 0;
+  const seedString = `${accountKey}-${Math.floor(now / CYCLE_48H_MS)}`;
+  for (let i = 0; i < seedString.length; i++) {
+    accountSeed = (accountSeed << 5) - accountSeed + seedString.charCodeAt(i);
+    accountSeed |= 0;
   }
 
-  // Generate new 48-hour cycle picks
-  const newSeed = Math.floor(now / CYCLE_48H_MS);
-
-  // Deterministic pseudo-random variation based on 48h seed
   const randomizedScored = scoredAnimes.map((item) => {
     let hash = 0;
-    const str = `${item.anime.id}-${newSeed}`;
+    const str = `${item.anime.id}-${accountSeed}`;
     for (let i = 0; i < str.length; i++) {
       hash = (hash << 5) - hash + str.charCodeAt(i);
       hash |= 0;
     }
-    const seedVariation = Math.abs(hash % 300);
+    const seedVariation = Math.abs(hash % 250);
     return {
       anime: item.anime,
       finalScore: item.baseScore + seedVariation,
@@ -143,10 +118,11 @@ export function getRecommendedAnimes(
   const pickedAnimes = randomizedScored.slice(0, 10).map((i) => i.anime);
   const pickedIds = pickedAnimes.map((a) => a.id);
 
-  saveRecommendationState({
+  // Cache in memory for the active user session
+  memoryUserRecommendations.set(accountKey, {
     cycleStartTime: now,
     animeIds: pickedIds,
-    seed: newSeed,
+    listSignature,
   });
 
   return pickedAnimes;

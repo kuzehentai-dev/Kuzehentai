@@ -38,6 +38,41 @@ const compressImage = (base64Str: string): Promise<string> => {
   return Promise.resolve(base64Str);
 };
 
+// Lightweight canvas resizer for studio covers to ensure they stay well under Firestore 1MB doc limits & localStorage limits
+const optimizeStudioImage = (base64Str: string, maxDim = 800, quality = 0.85): Promise<string> => {
+  return new Promise((resolve) => {
+    if (!base64Str || !base64Str.startsWith('data:image')) return resolve(base64Str);
+    if (base64Str.length < 250000) return resolve(base64Str); // Already under ~180KB
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return resolve(base64Str);
+      ctx.drawImage(img, 0, 0, width, height);
+      try {
+        const webp = canvas.toDataURL('image/webp', quality);
+        resolve(webp.length < base64Str.length ? webp : base64Str);
+      } catch {
+        resolve(base64Str);
+      }
+    };
+    img.onerror = () => resolve(base64Str);
+    img.src = base64Str;
+  });
+};
+
 // Smart URL parser to extract Anime title candidate & episode number from links (e.g. Internet Archive)
 export function parseAnimeLinkInfo(rawUrl: string, animesList: Anime[]) {
   if (!rawUrl || !rawUrl.trim()) {
@@ -894,27 +929,91 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
   const fetchFirebaseQuotaStats = async () => {
     setQuotaStats(prev => ({ ...prev, loading: true, error: null }));
     try {
-      const res = await fetch('/api/firebase/quota', { headers: apiHeaders });
-      if (res.ok) {
-        const json = await res.json();
-        setQuotaStats({
-          loading: false,
-          data: json,
-          error: null,
-          lastUpdated: new Date()
-        });
-      } else {
-        setQuotaStats(prev => ({
-          ...prev,
-          loading: false,
-          error: 'No se pudieron obtener las estadísticas de cuotas de Firebase.'
-        }));
+      const res = await fetch('/api/firebase/quota', { headers: apiHeaders }).catch(() => null);
+      if (res && res.ok) {
+        const text = await res.text();
+        try {
+          const json = JSON.parse(text);
+          if (json && json.storage) {
+            setQuotaStats({
+              loading: false,
+              data: json,
+              error: null,
+              lastUpdated: new Date()
+            });
+            return;
+          }
+        } catch (e) {}
       }
-    } catch (err: any) {
+    } catch (err: any) {}
+
+    // Fallback: Real-time calculation using available app data (animes, studios, genres)
+    try {
+      const animesList = animes || [];
+      const studiosList = studios || [];
+      const genresList = genres || [];
+
+      let totalEpisodesCount = 0;
+      let estimatedSizeBytes = 0;
+
+      for (const a of animesList) {
+        totalEpisodesCount += (a.episodes || []).length;
+        estimatedSizeBytes += new Blob([JSON.stringify(a)]).size;
+      }
+      for (const s of studiosList) {
+        estimatedSizeBytes += new Blob([JSON.stringify(s)]).size;
+      }
+      for (const g of genresList) {
+        estimatedSizeBytes += new Blob([JSON.stringify(g)]).size;
+      }
+
+      // Spark Plan (Free Tier) Official Firestore Limits: 1 GiB = 1,073,741,824 bytes
+      const SPARK_STORAGE_LIMIT_BYTES = 1 * 1024 * 1024 * 1024;
+      const usedStorageBytes = estimatedSizeBytes;
+      const remainingStorageBytes = Math.max(0, SPARK_STORAGE_LIMIT_BYTES - usedStorageBytes);
+      const usedStorageMB = +(usedStorageBytes / (1024 * 1024)).toFixed(2);
+      const remainingStorageMB = +(remainingStorageBytes / (1024 * 1024)).toFixed(2);
+      const storagePercentUsed = +((usedStorageBytes / SPARK_STORAGE_LIMIT_BYTES) * 100).toFixed(3);
+
+      const computedStats = {
+        planName: 'Spark Plan (Gratuito)',
+        projectId: 'khentai',
+        databaseId: '(default)',
+        storage: {
+          limitBytes: SPARK_STORAGE_LIMIT_BYTES,
+          limitFormatted: '1.00 GB (1,024 MB)',
+          usedBytes: usedStorageBytes,
+          usedMB: usedStorageMB,
+          usedFormatted: `${usedStorageMB} MB`,
+          remainingBytes: remainingStorageBytes,
+          remainingMB: remainingStorageMB,
+          remainingFormatted: `${remainingStorageMB} MB (${(remainingStorageMB / 1024).toFixed(2)} GB)`,
+          percentUsed: storagePercentUsed,
+          percentRemaining: +(100 - storagePercentUsed).toFixed(3),
+          totalCoversDiskMB: +(usedStorageMB * 0.75).toFixed(2),
+          totalCoversCount: animesList.filter(a => !!(a.image || a.coverData)).length
+        },
+        counts: {
+          totalDocuments: animesList.length + studiosList.length + genresList.length,
+          animes: animesList.length,
+          episodes: totalEpisodesCount,
+          studios: studiosList.length,
+          genres: genresList.length,
+          userLists: 0
+        }
+      };
+
+      setQuotaStats({
+        loading: false,
+        data: computedStats,
+        error: null,
+        lastUpdated: new Date()
+      });
+    } catch (fallbackErr: any) {
       setQuotaStats(prev => ({
         ...prev,
         loading: false,
-        error: 'Error de conexión al consultar Firebase.'
+        error: 'No se pudieron calcular las estadísticas de Firebase.'
       }));
     }
   };
@@ -1169,83 +1268,118 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
     setStudioError('');
     if (!studioName.trim()) return setStudioError('El nombre es requerido');
 
+    const targetId = editingStudio ? editingStudio.id : ('st-' + Math.random().toString(36).substring(2, 9));
+    let finalImage = studioImage || '';
+    if (finalImage.startsWith('data:image')) {
+      try {
+        finalImage = await optimizeStudioImage(finalImage);
+      } catch (e) {}
+    }
+
+    const payload = {
+      id: targetId,
+      name: studioName.trim(),
+      image: finalImage,
+      storageLocation: 'Firebase Firestore (khentai)',
+      updatedAt: new Date().toISOString()
+    };
+
     try {
       const url = editingStudio ? `/api/studios/${editingStudio.id}` : '/api/studios';
       const method = editingStudio ? 'PUT' : 'POST';
       const res = await fetch(url, {
         method,
         headers: apiHeaders,
-        body: JSON.stringify({ name: studioName.trim(), image: studioImage || '' })
-      });
+        body: JSON.stringify({ name: studioName.trim(), image: finalImage })
+      }).catch(() => null);
 
-      if (res.ok) {
-        const savedStudio = await res.json().catch(() => null);
+      if (res && res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const savedStudio = await res.json().catch(() => null);
+          setStudioName('');
+          setStudioImage('');
+          setEditingStudio(null);
+          onRefresh();
+          const loc = savedStudio?.storageLocation || 'Firebase Firestore (khentai)';
+          showNotification(
+            editingStudio ? `Estudio actualizado con éxito en ${loc}` : `Estudio creado con éxito en ${loc}`,
+            'success'
+          );
+          return;
+        }
+      }
+
+      if (res && res.status === 401) {
+        handleLogout();
+        return setStudioError('Tu sesión ha expirado. Por favor vuelve a ingresar.');
+      }
+
+      // Direct Firebase Firestore Fallback (e.g. Vercel deployment where Express /api/ is not running)
+      try {
+        await setDoc(doc(db, 'studios', targetId), payload, { merge: true });
+
+        // Update local storage safely
+        try {
+          const localStudios = JSON.parse(localStorage.getItem('hk_user_studios') || '[]');
+          const idx = localStudios.findIndex((s: any) => s.id === targetId);
+          if (idx >= 0) localStudios[idx] = payload; else localStudios.push(payload);
+          localStorage.setItem('hk_user_studios', JSON.stringify(localStudios));
+        } catch (e) {}
+
         setStudioName('');
         setStudioImage('');
         setEditingStudio(null);
         onRefresh();
-        const loc = savedStudio?.storageLocation || 'Firebase Firestore (khentai)';
         showNotification(
-          editingStudio ? `Estudio actualizado con éxito en ${loc}` : `Estudio creado con éxito en ${loc}`,
+          editingStudio ? `Estudio actualizado con éxito en Firebase Firestore (khentai)` : `Estudio creado con éxito en Firebase Firestore (khentai)`,
           'success'
         );
-      } else {
-        if (res.status === 401) {
-          handleLogout();
-          return setStudioError('Tu sesión ha expirado. Por favor vuelve a ingresar.');
-        }
-        const errData = await res.json().catch(() => ({}));
-        setStudioError(errData.error || 'Error al guardar estudio');
+      } catch (fbErr: any) {
+        setStudioError(fbErr?.message || 'Error al guardar el estudio en Firebase Firestore');
       }
-    } catch (err) {
-      // Fallback local save if network error occurs
-      const fallbackStudio: Studio = {
-        id: editingStudio ? editingStudio.id : 'st-' + Math.random().toString(36).substring(2, 9),
-        name: studioName.trim()
-      };
+    } catch (err: any) {
       try {
-        const localStudios = JSON.parse(localStorage.getItem('hk_user_studios') || '[]');
-        const idx = localStudios.findIndex((s: any) => s.id === fallbackStudio.id);
-        if (idx >= 0) localStudios[idx] = fallbackStudio; else localStudios.push(fallbackStudio);
-        localStorage.setItem('hk_user_studios', JSON.stringify(localStudios));
+        await setDoc(doc(db, 'studios', targetId), payload, { merge: true });
         setStudioName('');
+        setStudioImage('');
         setEditingStudio(null);
         onRefresh();
-        showNotification('Estudio guardado localmente (sin conexión con servidor)', 'success');
-      } catch (e) {
-        setStudioError('Error al guardar el estudio localmente.');
+        showNotification('Estudio guardado con éxito en Firebase Firestore (khentai)', 'success');
+      } catch (fbErr: any) {
+        setStudioError('Error al guardar el estudio: ' + (fbErr?.message || 'Error de red'));
       }
     }
   };
 
   const executeDeleteStudio = async (id: string) => {
     try {
-      const res = await fetch(`/api/studios/${id}`, { method: 'DELETE', headers: apiHeaders });
-      if (res.ok) {
-        try {
-          // Remove from local replica
-          const localStudios = JSON.parse(localStorage.getItem('hk_user_studios') || '[]');
-          const updated = localStudios.filter((s: any) => s.id !== id);
-          localStorage.setItem('hk_user_studios', JSON.stringify(updated));
+      // 1. Server endpoint call
+      await fetch(`/api/studios/${id}`, { method: 'DELETE', headers: apiHeaders }).catch(() => null);
 
-          // Add to deleted list
-          const deletedIds = JSON.parse(localStorage.getItem('hk_deleted_studio_ids') || '[]');
-          if (!deletedIds.includes(id)) {
-            deletedIds.push(id);
-            localStorage.setItem('hk_deleted_studio_ids', JSON.stringify(deletedIds));
-          }
-        } catch (e) {
-          console.error(e);
+      // 2. Direct Firebase Firestore deletion fallback
+      await deleteDoc(doc(db, 'studios', id)).catch(() => null);
+
+      try {
+        // Remove from local replica
+        const localStudios = JSON.parse(localStorage.getItem('hk_user_studios') || '[]');
+        const updated = localStudios.filter((s: any) => s.id !== id);
+        localStorage.setItem('hk_user_studios', JSON.stringify(updated));
+
+        // Add to deleted list
+        const deletedIds = JSON.parse(localStorage.getItem('hk_deleted_studio_ids') || '[]');
+        if (!deletedIds.includes(id)) {
+          deletedIds.push(id);
+          localStorage.setItem('hk_deleted_studio_ids', JSON.stringify(deletedIds));
         }
-
-        onRefresh();
-        showNotification('Estudio eliminado con éxito', 'success');
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        showNotification(errData.error || 'Error al eliminar estudio. Asegúrate de que no tenga animes asociados.', 'error');
+      } catch (e) {
+        console.error(e);
       }
+
+      onRefresh();
+      showNotification('Estudio eliminado con éxito', 'success');
     } catch (err) {
-      showNotification('Error de red al eliminar.', 'error');
+      showNotification('Error al eliminar estudio.', 'error');
     }
   };
 
@@ -1266,6 +1400,14 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
     setGenreError('');
     if (!genreName.trim()) return setGenreError('El nombre es requerido');
 
+    const targetId = editingGenre ? editingGenre.id : ('gn-' + Math.random().toString(36).substring(2, 9));
+    const payload = {
+      id: targetId,
+      name: genreName.trim(),
+      storageLocation: 'Firebase Firestore (khentai)',
+      updatedAt: new Date().toISOString()
+    };
+
     try {
       const url = editingGenre ? `/api/genres/${editingGenre.id}` : '/api/genres';
       const method = editingGenre ? 'PUT' : 'POST';
@@ -1273,42 +1415,58 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
         method,
         headers: apiHeaders,
         body: JSON.stringify({ name: genreName })
-      });
+      }).catch(() => null);
 
-      if (res.ok) {
-        const savedGenre = await res.json().catch(() => null);
+      if (res && res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const savedGenre = await res.json().catch(() => null);
+          setGenreName('');
+          setEditingGenre(null);
+          onRefresh();
+          const loc = savedGenre?.storageLocation || 'Firebase Firestore (khentai)';
+          showNotification(
+            editingGenre ? `Género actualizado con éxito en ${loc}` : `Género creado con éxito en ${loc}`,
+            'success'
+          );
+          return;
+        }
+      }
+
+      if (res && res.status === 401) {
+        handleLogout();
+        return setGenreError('Tu sesión ha expirado. Por favor vuelve a ingresar.');
+      }
+
+      // Direct Firebase Firestore Fallback (e.g. Vercel deployment)
+      try {
+        await setDoc(doc(db, 'genres', targetId), payload, { merge: true });
+
+        try {
+          const localGenres = JSON.parse(localStorage.getItem('hk_user_genres') || '[]');
+          const idx = localGenres.findIndex((g: any) => g.id === targetId);
+          if (idx >= 0) localGenres[idx] = payload; else localGenres.push(payload);
+          localStorage.setItem('hk_user_genres', JSON.stringify(localGenres));
+        } catch (e) {}
+
         setGenreName('');
         setEditingGenre(null);
         onRefresh();
-        const loc = savedGenre?.storageLocation || 'Firebase Firestore (khentai)';
         showNotification(
-          editingGenre ? `Género actualizado con éxito en ${loc}` : `Género creado con éxito en ${loc}`,
+          editingGenre ? `Género actualizado con éxito en Firebase Firestore` : `Género creado con éxito en Firebase Firestore`,
           'success'
         );
-      } else {
-        if (res.status === 401) {
-          handleLogout();
-          return setGenreError('Tu sesión ha expirado. Por favor vuelve a ingresar.');
-        }
-        const errData = await res.json().catch(() => ({}));
-        setGenreError(errData.error || 'Error al guardar género');
+      } catch (fbErr: any) {
+        setGenreError(fbErr?.message || 'Error al guardar género en Firebase Firestore');
       }
-    } catch (err) {
-      // Fallback local save if network error occurs
-      const fallbackGenre: Genre = {
-        id: editingGenre ? editingGenre.id : 'gn-' + Math.random().toString(36).substring(2, 9),
-        name: genreName.trim()
-      };
+    } catch (err: any) {
       try {
-        const localGenres = JSON.parse(localStorage.getItem('hk_user_genres') || '[]');
-        const idx = localGenres.findIndex((g: any) => g.id === fallbackGenre.id);
-        if (idx >= 0) localGenres[idx] = fallbackGenre; else localGenres.push(fallbackGenre);
-        localStorage.setItem('hk_user_genres', JSON.stringify(localGenres));
+        await setDoc(doc(db, 'genres', targetId), payload, { merge: true });
         setGenreName('');
         setEditingGenre(null);
         onRefresh();
-        showNotification('Género guardado localmente (sin conexión con servidor)', 'success');
-      } catch (e) {
+        showNotification('Género guardado con éxito en Firebase Firestore', 'success');
+      } catch (fbErr: any) {
         setGenreError('Error al guardar el género localmente.');
       }
     }
@@ -1316,32 +1474,29 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
 
   const executeDeleteGenre = async (id: string) => {
     try {
-      const res = await fetch(`/api/genres/${id}`, { method: 'DELETE', headers: apiHeaders });
-      if (res.ok) {
-        try {
-          // Remove from local replica
-          const localGenres = JSON.parse(localStorage.getItem('hk_user_genres') || '[]');
-          const updated = localGenres.filter((g: any) => g.id !== id);
-          localStorage.setItem('hk_user_genres', JSON.stringify(updated));
+      await fetch(`/api/genres/${id}`, { method: 'DELETE', headers: apiHeaders }).catch(() => null);
+      await deleteDoc(doc(db, 'genres', id)).catch(() => null);
 
-          // Add to deleted list
-          const deletedIds = JSON.parse(localStorage.getItem('hk_deleted_genre_ids') || '[]');
-          if (!deletedIds.includes(id)) {
-            deletedIds.push(id);
-            localStorage.setItem('hk_deleted_genre_ids', JSON.stringify(deletedIds));
-          }
-        } catch (e) {
-          console.error(e);
+      try {
+        // Remove from local replica
+        const localGenres = JSON.parse(localStorage.getItem('hk_user_genres') || '[]');
+        const updated = localGenres.filter((g: any) => g.id !== id);
+        localStorage.setItem('hk_user_genres', JSON.stringify(updated));
+
+        // Add to deleted list
+        const deletedIds = JSON.parse(localStorage.getItem('hk_deleted_genre_ids') || '[]');
+        if (!deletedIds.includes(id)) {
+          deletedIds.push(id);
+          localStorage.setItem('hk_deleted_genre_ids', JSON.stringify(deletedIds));
         }
-
-        onRefresh();
-        showNotification('Género eliminado con éxito', 'success');
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        showNotification(errData.error || 'Error al eliminar género.', 'error');
+      } catch (e) {
+        console.error(e);
       }
+
+      onRefresh();
+      showNotification('Género eliminado con éxito', 'success');
     } catch (err) {
-      showNotification('Error de red al eliminar.', 'error');
+      showNotification('Error al eliminar género.', 'error');
     }
   };
 
@@ -3112,7 +3267,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                         <div className="flex items-center gap-1.5 sm:gap-2 px-1 text-[9px] font-mono text-neutral-400 uppercase tracking-wider select-none">
                           <span className="w-11 sm:w-13 text-center">Nº</span>
                           <span className="flex-1">Enlace de video (.mp4)</span>
-                          <span className="w-16 sm:w-20 text-center" title="Miniatura">Miniatura</span>
+                          <span className="w-8 text-center" title="Miniatura">Min</span>
                           <span className="w-16 sm:w-20 text-center">Episodios</span>
                           <span className="w-7"></span>
                         </div>
@@ -3155,9 +3310,9 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                                 />
                               </div>
 
-                              {/* Botón Miniatura al lado del enlace: '+' si no hay, '✓' si está lista */}
+                              {/* Cuadrito compacto de Miniatura al lado del enlace: '+' si no hay, '✓' si está lista */}
                               <label
-                                className={`h-8 px-2 shrink-0 flex items-center justify-center gap-1 rounded cursor-pointer transition-all border group select-none text-[10px] font-mono ${
+                                className={`h-8 w-8 shrink-0 flex items-center justify-center rounded cursor-pointer transition-all border group select-none ${
                                   (ep.thumbnail || ep.coverImage)
                                     ? 'bg-purple-950/50 border-purple-500/70 text-purple-300 hover:bg-purple-900/50 shadow-sm'
                                     : 'bg-[#0a0a0a] border-dark-border hover:border-purple-500/60 text-neutral-400 hover:text-white'
@@ -3188,11 +3343,14 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                                   }}
                                 />
                                 {(ep.thumbnail || ep.coverImage) ? (
-                                  <Check className="h-3.5 w-3.5 text-purple-400 stroke-[2.5]" />
+                                  <img
+                                    src={ep.thumbnail || ep.coverImage}
+                                    alt="Miniatura"
+                                    className="w-full h-full object-cover rounded"
+                                  />
                                 ) : (
-                                  <Plus className="h-3.5 w-3.5 text-neutral-400 group-hover:text-purple-300 transition-colors" />
+                                  <Plus className="h-4 w-4 text-neutral-400 group-hover:text-purple-300 transition-colors" />
                                 )}
-                                <span className="inline">Miniatura</span>
                               </label>
 
                               {/* Interruptor pequeño: Verde cuando se muestra, sin color/neutral cuando no */}
@@ -4796,7 +4954,7 @@ export default function AdminPanel({ studios, genres, animes, onRefresh, onBackT
                               }}
                             />
                             {item.coverImage ? (
-                              <Check className="h-4 w-4 text-emerald-400 stroke-[2.5]" />
+                              <img src={item.coverImage} alt="Miniatura" className="w-full h-full object-cover rounded" />
                             ) : (
                               <Plus className="h-4 w-4 text-neutral-400 group-hover:text-purple-300 transition-colors" />
                             )}

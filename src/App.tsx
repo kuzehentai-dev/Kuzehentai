@@ -118,6 +118,31 @@ const isEmisionStatus = (status?: string) => Boolean(
   ) && !isUpcomingStatus(status)
 );
 
+// Limpieza de datos temporales/locales al reiniciar o recargar la página para que siempre inicie fresca
+if (typeof window !== 'undefined') {
+  try {
+    const keysToCleanOnRestart = [
+      'hk_guest_my_list',
+      'hk_guest_my_list_ts',
+      'kh_guest_watched_list',
+      'kh_catalog_page',
+      'kh_display_mode',
+      'kh_studios_expanded',
+      'hk_cached_animes',
+      'hk_cached_studios',
+      'hk_cached_genres',
+      'kh_report_chat_messages',
+      'kh_recommendations_48h_v1',
+      'kh_persisted_loaded_covers',
+      'kh_anime_views_24h'
+    ];
+    keysToCleanOnRestart.forEach((k) => {
+      localStorage.removeItem(k);
+      sessionStorage.removeItem(k);
+    });
+  } catch (e) {}
+}
+
 export default function App() {
   // Page routing state
   const [currentPage, setCurrentPage] = useState<PageType>('home');
@@ -132,48 +157,15 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [isCatalogSearchOpen, setIsCatalogSearchOpen] = useState<boolean>(false);
   const [catalogSearchQuery, setCatalogSearchQuery] = useState<string>('');
+  const deferredCatalogSearchQuery = React.useDeferredValue(catalogSearchQuery);
+  const [catalogSearchVisibleCount, setCatalogSearchVisibleCount] = useState<number>(30);
   const catalogSearchInputRef = useRef<HTMLInputElement>(null);
 
-  // Persistent "Mi Lista" state (isolated by user account or guest session, auto-purges >90 days)
-  const [myListIds, setMyListIds] = useState<string[]>(() => {
-    try {
-      const guestSaved = localStorage.getItem('hk_guest_my_list');
-      if (guestSaved) {
-        const rawIds: string[] = JSON.parse(guestSaved);
-        if (Array.isArray(rawIds)) {
-          const timestampMap: Record<string, number> = JSON.parse(localStorage.getItem('hk_guest_my_list_ts') || '{}');
-          const now = Date.now();
-          const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
-          const validIds = rawIds.filter(id => {
-            const ts = timestampMap[id];
-            if (!ts) return true;
-            return now - ts <= NINETY_DAYS_MS;
-          });
-          if (validIds.length !== rawIds.length) {
-            try { localStorage.setItem('hk_guest_my_list', JSON.stringify(validIds)); } catch (e) {}
-          }
-          return validIds;
-        }
-      }
-      return [];
-    } catch (e) {
-      return [];
-    }
-  });
+  // In-session "Mi Lista" state (isolated by user account in Firestore or clean in-memory session)
+  const [myListIds, setMyListIds] = useState<string[]>([]);
 
-  // Persistent "Vistos" state (isolated by user account or guest session)
-  const [watchedIds, setWatchedIds] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('kh_guest_watched_list');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      }
-      return [];
-    } catch (e) {
-      return [];
-    }
-  });
+  // In-session "Vistos" state (isolated by user account in Firestore or clean in-memory session)
+  const [watchedIds, setWatchedIds] = useState<string[]>([]);
 
   // 1. Firebase Auth listener & Firestore User List Auto-Sync (100% Isolated per User)
   useEffect(() => {
@@ -385,39 +377,11 @@ export default function App() {
     });
   };
 
-  // Database lists state with persistent session & local cache for zero-latency instant rendering
-  const [studios, setStudios] = useState<Studio[]>(() => {
-    try {
-      const sess = sessionStorage.getItem('hk_cached_studios');
-      if (sess) return JSON.parse(sess);
-      const saved = localStorage.getItem('hk_cached_studios');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) { return []; }
-  });
-  const [genres, setGenres] = useState<Genre[]>(() => {
-    try {
-      const sess = sessionStorage.getItem('hk_cached_genres');
-      if (sess) return JSON.parse(sess);
-      const saved = localStorage.getItem('hk_cached_genres');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) { return []; }
-  });
-  const [animes, setAnimes] = useState<Anime[]>(() => {
-    try {
-      const sess = sessionStorage.getItem('hk_cached_animes');
-      if (sess) return JSON.parse(sess);
-      const saved = localStorage.getItem('hk_cached_animes');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) { return []; }
-  });
-  const [loading, setLoading] = useState<boolean>(() => {
-    try {
-      const sess = sessionStorage.getItem('hk_cached_animes');
-      if (sess && JSON.parse(sess).length > 0) return false;
-      const saved = localStorage.getItem('hk_cached_animes');
-      return saved ? JSON.parse(saved).length === 0 : true;
-    } catch (e) { return true; }
-  });
+  // Database lists state
+  const [studios, setStudios] = useState<Studio[]>([]);
+  const [genres, setGenres] = useState<Genre[]>([]);
+  const [animes, setAnimes] = useState<Anime[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
 
   // Search & Filters state
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -431,25 +395,9 @@ export default function App() {
   const [selectedYear, setSelectedYear] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
   const [selectedRating, setSelectedRating] = useState('');
-  const [sortBy, setSortBy] = useState<string>('recientes');
-  const [displayMode, setDisplayMode] = useState<GalleryDisplayMode>(() => {
-    try {
-      const saved = localStorage.getItem('kh_display_mode');
-      return (saved === 'sections' || saved === 'episodes' || saved === 'catalog') ? (saved as GalleryDisplayMode) : 'sections';
-    } catch {
-      return 'sections';
-    }
-  });
-
-  const [page, setPage] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('kh_catalog_page');
-      const parsed = parseInt(saved || '1', 10);
-      return !isNaN(parsed) && parsed >= 1 ? parsed : 1;
-    } catch {
-      return 1;
-    }
-  });
+  const [sortBy, setSortBy] = useState<string>('name-asc');
+  const [displayMode, setDisplayMode] = useState<GalleryDisplayMode>('sections');
+  const [page, setPage] = useState<number>(1);
 
   const handleToggleDisplayMode = (mode: GalleryDisplayMode) => {
     setDisplayMode(mode);
@@ -537,22 +485,6 @@ export default function App() {
   }, []);
 
 
-  const [isHeaderVisible, setIsHeaderVisible] = useState(true);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      const currentScrollY = window.scrollY;
-      if (currentScrollY <= 15) {
-        setIsHeaderVisible(true);
-      } else {
-        setIsHeaderVisible(false);
-      }
-    };
-
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
   // Reset page to 1 only when search or filters change, NOT when toggling displayMode or navigating
   useEffect(() => {
     setPageDirection(1);
@@ -574,12 +506,25 @@ export default function App() {
         headers['Authorization'] = `Bearer ${token}`;
       }
 
-      // Try combined /api/bootstrap endpoint first for 3x faster initial load
-      const bootstrapRes = await fetch('/api/bootstrap', { headers }).catch(() => null);
+      // Cache-busting headers to prevent Vercel CDN/Browser edge caches from serving stale data
+      const fetchHeaders: HeadersInit = {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        ...headers
+      };
+
+      // Try combined /api/bootstrap endpoint first if on a Node/Express server
+      const bootstrapRes = await fetch(`/api/bootstrap?_t=${Date.now()}`, { 
+        headers: fetchHeaders,
+        cache: 'no-store'
+      }).catch(() => null);
+
+      let isStaticHosting = false;
+
       if (bootstrapRes && bootstrapRes.ok) {
         const contentType = bootstrapRes.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
-          const data = await bootstrapRes.json();
+          const data = await bootstrapRes.json().catch(() => null);
           if (data && Array.isArray(data.studios) && Array.isArray(data.genres) && Array.isArray(data.animes)) {
             const normalizedAnimes = data.animes.map((a: any) => ({
               ...a,
@@ -592,63 +537,66 @@ export default function App() {
               sessionStorage.setItem('hk_cached_studios', JSON.stringify(data.studios));
               sessionStorage.setItem('hk_cached_genres', JSON.stringify(data.genres));
               sessionStorage.setItem('hk_cached_animes', JSON.stringify(normalizedAnimes));
-              localStorage.setItem('hk_cached_studios', JSON.stringify(data.studios));
-              localStorage.setItem('hk_cached_genres', JSON.stringify(data.genres));
-              localStorage.setItem('hk_cached_animes', JSON.stringify(normalizedAnimes));
             } catch (e) {}
-            // Permanent persistent save in IndexedDB (no 5MB quota limit, survives reloads without calling Firebase)
+            // Permanent persistent save in IndexedDB
             saveCatalogToIDB(normalizedAnimes, data.studios, data.genres);
             // Prioritized startup load: episodes & catalog page 1 first, then background queue
             const epThumbs = extractEpisodeThumbnails(normalizedAnimes);
             startPrioritizedAppLoading(normalizedAnimes, data.studios, epThumbs);
             return;
           }
+        } else {
+          isStaticHosting = true;
         }
+      } else {
+        isStaticHosting = true;
       }
-
-      // Fallback to individual API requests if bootstrap is not available
-      const [resStudios, resGenres, resAnimes] = await Promise.all([
-        fetch('/api/studios').catch(() => null),
-        fetch('/api/genres').catch(() => null),
-        fetch('/api/animes', { headers }).catch(() => null)
-      ]);
 
       let loadedStudios: Studio[] | null = null;
       let loadedGenres: Genre[] | null = null;
       let loadedAnimes: Anime[] | null = null;
 
-      if (resStudios && resStudios.ok) {
-        const contentType = resStudios.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          try {
-            const dataStudios = await resStudios.json();
-            if (Array.isArray(dataStudios)) loadedStudios = dataStudios;
-          } catch (e) {}
-        }
-      }
+      // Only attempt individual API requests if NOT on static hosting (e.g. Vercel)
+      if (!isStaticHosting) {
+        const [resStudios, resGenres, resAnimes] = await Promise.all([
+          fetch(`/api/studios?_t=${Date.now()}`, { headers: fetchHeaders, cache: 'no-store' }).catch(() => null),
+          fetch(`/api/genres?_t=${Date.now()}`, { headers: fetchHeaders, cache: 'no-store' }).catch(() => null),
+          fetch(`/api/animes?_t=${Date.now()}`, { headers: fetchHeaders, cache: 'no-store' }).catch(() => null)
+        ]);
 
-      if (resGenres && resGenres.ok) {
-        const contentType = resGenres.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          try {
-            const dataGenres = await resGenres.json();
-            if (Array.isArray(dataGenres)) loadedGenres = dataGenres;
-          } catch (e) {}
+        if (resStudios && resStudios.ok) {
+          const contentType = resStudios.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            try {
+              const dataStudios = await resStudios.json();
+              if (Array.isArray(dataStudios)) loadedStudios = dataStudios;
+            } catch (e) {}
+          }
         }
-      }
 
-      if (resAnimes && resAnimes.ok) {
-        const contentType = resAnimes.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          try {
-            const dataAnimes = await resAnimes.json();
-            if (Array.isArray(dataAnimes)) {
-              loadedAnimes = dataAnimes.map((a: any) => ({
-                ...a,
-                episodes: normalizeEpisodesList(a.episodes)
-              }));
-            }
-          } catch (e) {}
+        if (resGenres && resGenres.ok) {
+          const contentType = resGenres.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            try {
+              const dataGenres = await resGenres.json();
+              if (Array.isArray(dataGenres)) loadedGenres = dataGenres;
+            } catch (e) {}
+          }
+        }
+
+        if (resAnimes && resAnimes.ok) {
+          const contentType = resAnimes.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            try {
+              const dataAnimes = await resAnimes.json();
+              if (Array.isArray(dataAnimes)) {
+                loadedAnimes = dataAnimes.map((a: any) => ({
+                  ...a,
+                  episodes: normalizeEpisodesList(a.episodes)
+                }));
+              }
+            } catch (e) {}
+          }
         }
       }
 
@@ -931,19 +879,17 @@ export default function App() {
       }
       if (animeId) {
         lastViewedAnimeId.current = animeId;
-        const target = animes.find(a => a.id === animeId);
-        if (target) {
-          const sIds = (target.studioIds && target.studioIds.length > 0) ? target.studioIds : (target.studioId ? [target.studioId] : []);
-          const sName = studios.find(s => sIds.includes(s.id))?.name || 'Estudio';
-          preloadAnimeCover(target, sName);
-        }
       }
     } else if (nextPage === 'my-list') {
-      const savedAnimes = animes.filter(a => myListIds.includes(a.id));
-      preloadAllAnimes(savedAnimes, studios);
+      setTimeout(() => {
+        const savedAnimes = animes.filter(a => myListIds.includes(a.id));
+        preloadAllAnimes(savedAnimes, studios);
+      }, 300);
     } else if (nextPage === 'watched') {
-      const watchedAnimes = animes.filter(a => watchedIds.includes(a.id));
-      preloadAllAnimes(watchedAnimes, studios);
+      setTimeout(() => {
+        const watchedAnimes = animes.filter(a => watchedIds.includes(a.id));
+        preloadAllAnimes(watchedAnimes, studios);
+      }, 300);
     } else if (prev === 'detail') {
       setIsDetailAnimating(true);
     }
@@ -963,7 +909,9 @@ export default function App() {
     setSelectedEpisodeNum(episodeNum);
     
     if (nextPage === 'detail' && animeId) {
-      recordHeroAnimeView(animeId);
+      setTimeout(() => {
+        recordHeroAnimeView(animeId);
+      }, 500);
     }
     
     let path = '/';
@@ -1005,12 +953,13 @@ export default function App() {
   // Clear and toggle filter handlers
   const handleResetAllFilters = () => {
     setSearchQuery('');
+    setCatalogSearchQuery('');
     setSelectedStudioId('');
     setSelectedGenreIds([]);
     setSelectedYear('');
     setSelectedStatus('');
     setSelectedRating('');
-    setSortBy('recientes');
+    setSortBy('name-asc');
   };
 
   const handleToggleGenre = (genreId: string) => {
@@ -1114,6 +1063,73 @@ export default function App() {
       .map(data => data.anime);
   }, [normalizedAnimeCache, deferredSearchQuery, selectedStudioId, selectedGenreIds, selectedYear, selectedStatus, selectedRating, displayMode]);
 
+  // --- Reusable Sorting Logic for all Anime Lists (Catalog, Search, and Filtered Views) ---
+  const applyAnimeSorting = useCallback((list: Anime[], sortType: string) => {
+    return [...list].sort((a, b) => {
+      if (sortType === 'rating-desc') {
+        const statsA = getAnimeRatingStats(a.id);
+        const statsB = getAnimeRatingStats(b.id);
+        if (statsB.average !== statsA.average) return statsB.average - statsA.average;
+        if (statsB.totalVotes !== statsA.totalVotes) return statsB.totalVotes - statsA.totalVotes;
+        return a.name.localeCompare(b.name, 'es', { sensitivity: 'base' });
+      }
+      if (sortType === 'rating-asc') {
+        const statsA = getAnimeRatingStats(a.id);
+        const statsB = getAnimeRatingStats(b.id);
+        if (statsA.average !== statsB.average) return statsA.average - statsB.average;
+        return a.name.localeCompare(b.name, 'es', { sensitivity: 'base' });
+      }
+      if (sortType === 'name-asc') {
+        return a.name.localeCompare(b.name, 'es', { sensitivity: 'base' });
+      }
+      if (sortType === 'name-desc') {
+        return b.name.localeCompare(a.name, 'es', { sensitivity: 'base' });
+      }
+      if (sortType === 'year-desc') {
+        const yearA = parseInt(normalizeAnimeYear(a.year) || '0', 10) || 0;
+        const yearB = parseInt(normalizeAnimeYear(b.year) || '0', 10) || 0;
+        if (yearA !== yearB) return yearB - yearA;
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (timeA > 0 && timeB > 0 && timeA !== timeB) return timeB - timeA;
+        const idxA = originalAnimeIndexMap.get(a.id) ?? 0;
+        const idxB = originalAnimeIndexMap.get(b.id) ?? 0;
+        return idxB - idxA;
+      }
+      if (sortType === 'year-asc') {
+        const yearA = parseInt(normalizeAnimeYear(a.year) || '0', 10) || 0;
+        const yearB = parseInt(normalizeAnimeYear(b.year) || '0', 10) || 0;
+        if (yearA !== yearB) return yearA - yearB;
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (timeA > 0 && timeB > 0 && timeA !== timeB) return timeA - timeB;
+        const idxA = originalAnimeIndexMap.get(a.id) ?? 0;
+        const idxB = originalAnimeIndexMap.get(b.id) ?? 0;
+        return idxA - idxB;
+      }
+
+      // 'recientes': Según su año de lanzamiento más reciente (ej. 2026 antes que 2024),
+      // y a igualdad de año, los más recientemente agregados (createdAt más nuevo primero)
+      const yearA = parseInt(normalizeAnimeYear(a.year) || '0', 10) || 0;
+      const yearB = parseInt(normalizeAnimeYear(b.year) || '0', 10) || 0;
+      if (yearA !== yearB) {
+        return yearB - yearA;
+      }
+
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      if (timeA > 0 && timeB > 0 && timeA !== timeB) {
+        return timeB - timeA;
+      }
+      if (timeA > 0 && timeB === 0) return -1;
+      if (timeB > 0 && timeA === 0) return 1;
+
+      const idxA = originalAnimeIndexMap.get(a.id) ?? 0;
+      const idxB = originalAnimeIndexMap.get(b.id) ?? 0;
+      return idxB - idxA;
+    });
+  }, [originalAnimeIndexMap]);
+
   // --- Optimized Sorting Logic ---
   const sortedAnimes = useMemo(() => {
     const trimmedQuery = deferredSearchQuery.trim();
@@ -1135,54 +1151,15 @@ export default function App() {
         if (a.score !== b.score) {
           return b.score - a.score;
         }
-        return a.anime.name.localeCompare(b.anime.name);
+        return a.anime.name.localeCompare(b.anime.name, 'es', { sensitivity: 'base' });
       });
 
       return scored.map(s => s.anime);
     }
 
-    const result = [...filteredAnimes];
-    return result.sort((a, b) => {
-      if (sortBy === 'rating-desc') {
-        const ratingA = getAnimeRatingStats(a.id).average;
-        const ratingB = getAnimeRatingStats(b.id).average;
-        if (ratingB !== ratingA) return ratingB - ratingA;
-      }
-      if (sortBy === 'rating-asc') {
-        const ratingA = getAnimeRatingStats(a.id).average;
-        const ratingB = getAnimeRatingStats(b.id).average;
-        if (ratingA !== ratingB) return ratingA - ratingB;
-      }
-      if (sortBy === 'name-asc') {
-        return a.name.localeCompare(b.name);
-      }
-      if (sortBy === 'name-desc') {
-        return b.name.localeCompare(a.name);
-      }
-      if (sortBy === 'year-desc') {
-        const yearA = parseInt(normalizeAnimeYear(a.year) || '0', 10) || 0;
-        const yearB = parseInt(normalizeAnimeYear(b.year) || '0', 10) || 0;
-        if (yearA !== yearB) return yearB - yearA;
-        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        if (timeA > 0 && timeB > 0 && timeA !== timeB) return timeB - timeA;
-        const idxA = originalAnimeIndexMap.get(a.id) ?? 0;
-        const idxB = originalAnimeIndexMap.get(b.id) ?? 0;
-        return idxB - idxA;
-      }
-      if (sortBy === 'year-asc') {
-        const yearA = parseInt(normalizeAnimeYear(a.year) || '0', 10) || 0;
-        const yearB = parseInt(normalizeAnimeYear(b.year) || '0', 10) || 0;
-        if (yearA !== yearB) return yearA - yearB;
-        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        if (timeA > 0 && timeB > 0 && timeA !== timeB) return timeB - timeA;
-        const idxA = originalAnimeIndexMap.get(a.id) ?? 0;
-        const idxB = originalAnimeIndexMap.get(b.id) ?? 0;
-        return idxB - idxA;
-      }
-
-      if (displayMode === 'episodes') {
+    if (displayMode === 'episodes') {
+      const result = [...filteredAnimes];
+      return result.sort((a, b) => {
         const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
         const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
         if (timeA !== timeB) return timeB - timeA;
@@ -1194,26 +1171,11 @@ export default function App() {
         const idxA = originalAnimeIndexMap.get(a.id) ?? 0;
         const idxB = originalAnimeIndexMap.get(b.id) ?? 0;
         return idxB - idxA;
-      }
+      });
+    }
 
-      // Default sorting / 'recientes': Sort strictly by YEAR descending, then by ORDER OF ADDITION (newest added first)
-      const yearA = parseInt(normalizeAnimeYear(a.year) || '0', 10) || 0;
-      const yearB = parseInt(normalizeAnimeYear(b.year) || '0', 10) || 0;
-      if (yearA !== yearB) {
-        return yearB - yearA;
-      }
-
-      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      if (timeA > 0 && timeB > 0 && timeA !== timeB) {
-        return timeB - timeA;
-      }
-
-      const idxA = originalAnimeIndexMap.get(a.id) ?? 0;
-      const idxB = originalAnimeIndexMap.get(b.id) ?? 0;
-      return idxB - idxA;
-    });
-  }, [filteredAnimes, normalizedAnimeCache, deferredSearchQuery, sortBy, displayMode, originalAnimeIndexMap]);
+    return applyAnimeSorting(filteredAnimes, sortBy);
+  }, [filteredAnimes, normalizedAnimeCache, deferredSearchQuery, sortBy, displayMode, originalAnimeIndexMap, applyAnimeSorting]);
 
   // --- Individual Episodes for "Nuevos episodios" (solo animes/episodios activados desde el panel de administración) ---
   const recentEpisodes = useMemo(() => {
@@ -1269,10 +1231,10 @@ export default function App() {
     return items;
   }, [animes]);
 
-  // --- Recomendaciones (20 animes según gustos del usuario y géneros, rotación cada 48 horas) ---
+  // --- Recomendaciones (personalizadas según los gustos de cada usuario y aisladas por cuenta) ---
   const recommendedAnimes = useMemo(() => {
-    return getRecommendedAnimes(animes, myListIds, watchedIds);
-  }, [animes, myListIds, watchedIds]);
+    return getRecommendedAnimes(animes, myListIds, watchedIds, currentUser?.uid);
+  }, [animes, myListIds, watchedIds, currentUser?.uid]);
 
   // --- Últimos Hentai: ordenados estrictamente por fecha (año y fecha de adición) tal como en el catálogo principal ---
   const latestCatalogAnimes = useMemo(() => {
@@ -1356,18 +1318,54 @@ export default function App() {
     });
   }, [animes, myListIds]);
 
-  // --- Catálogo para sección (ordenado alfabéticamente A-Z por título, no por fecha de agregación) ---
+  // --- Catálogo para sección horizontal (aplica filtros activos y ordenación seleccionada) ---
   const catalogSectionAnimes = useMemo(() => {
-    const visible = animes.filter(a => !a.hidden && !isUpcomingStatus(a.status));
-    const sorted = [...visible].sort((a, b) => {
-      return a.name.localeCompare(b.name, 'es', { sensitivity: 'base' });
-    });
-    return sorted.slice(0, 20);
-  }, [animes]);
+    const visible = animes.filter(anime => {
+      if (anime.hidden) return false;
+      if (selectedStatus === 'Próximamente') {
+        if (!isUpcomingStatus(anime.status)) return false;
+      } else if (isUpcomingStatus(anime.status)) {
+        return false;
+      }
 
-  // --- Animes para la barra de búsqueda en la sección Catálogo de Inicio (mostrados en vertical con score de relevancia en tiempo real) ---
+      const sIds = (anime.studioIds && anime.studioIds.length > 0)
+        ? anime.studioIds
+        : (anime.studioId ? [anime.studioId] : []);
+      if (selectedStudioId && !sIds.includes(selectedStudioId)) return false;
+      if (selectedGenreIds.length > 0 && !selectedGenreIds.every(gid => anime.genreIds?.includes(gid))) return false;
+      if (selectedYear && normalizeAnimeYear(anime.year) !== selectedYear.trim()) return false;
+      if (selectedStatus) {
+        const s = (anime.status || 'Finalizado').toLowerCase();
+        if (selectedStatus === 'Emisión' && !isEmisionStatus(anime.status)) return false;
+        if (selectedStatus === 'Finalizado' && !s.includes('finaliz')) return false;
+      }
+      if (selectedRating) {
+        const stats = getAnimeRatingStats(anime.id);
+        if (selectedRating === '0' && stats.totalVotes !== 0) return false;
+        if (selectedRating === '5' && !(Math.round(stats.average) === 5 || stats.average >= 4.5)) return false;
+        if (selectedRating === '4' && !(Math.round(stats.average) === 4 || (stats.average >= 3.5 && stats.average < 4.5))) return false;
+        if (selectedRating === '3' && !(Math.round(stats.average) === 3 || (stats.average >= 2.5 && stats.average < 3.5))) return false;
+        if (selectedRating === '2' && !(Math.round(stats.average) === 2 || (stats.average >= 1.5 && stats.average < 2.5))) return false;
+        if (selectedRating === '1' && !(Math.round(stats.average) === 1 || (stats.average >= 0.5 && stats.average < 1.5))) return false;
+      }
+      return true;
+    });
+
+    return applyAnimeSorting(visible, sortBy);
+  }, [
+    animes,
+    selectedStudioId,
+    selectedGenreIds,
+    selectedYear,
+    selectedStatus,
+    selectedRating,
+    sortBy,
+    applyAnimeSorting
+  ]);
+
+  // --- Animes para la barra de búsqueda en la sección Catálogo de Inicio (mostrados en vertical con score de relevancia en tiempo real y ordenación) ---
   const catalogSearchSectionAnimes = useMemo(() => {
-    const trimmed = catalogSearchQuery.trim();
+    const trimmed = deferredCatalogSearchQuery.trim();
     const normQuery = normalizeSearchText(trimmed);
     const normQueryNoSpaces = normQuery.replace(/\s+/g, '');
     const queryTokens = normQuery.split(' ').filter(Boolean);
@@ -1406,10 +1404,7 @@ export default function App() {
     });
 
     if (!normQuery) {
-      const sorted = [...visibleCache].sort((a, b) => {
-        return a.anime.name.localeCompare(b.anime.name, 'es', { sensitivity: 'base' });
-      });
-      return sorted.map(d => d.anime);
+      return applyAnimeSorting(visibleCache.map(d => d.anime), sortBy);
     }
 
     const scored = visibleCache.map(data => ({
@@ -1421,19 +1416,29 @@ export default function App() {
       if (a.score !== b.score) {
         return b.score - a.score;
       }
-      return a.anime.name.localeCompare(b.anime.name, 'es', { sensitivity: 'base' });
+      return applyAnimeSorting([a.anime, b.anime], sortBy)[0] === a.anime ? -1 : 1;
     });
 
     return scored.map(s => s.anime);
   }, [
     normalizedAnimeCache,
-    catalogSearchQuery,
+    deferredCatalogSearchQuery,
     selectedStudioId,
     selectedGenreIds,
     selectedYear,
     selectedStatus,
     selectedRating,
+    sortBy,
+    applyAnimeSorting
   ]);
+
+  const displayedCatalogSearchAnimes = useMemo(() => {
+    return catalogSearchSectionAnimes.slice(0, catalogSearchVisibleCount);
+  }, [catalogSearchSectionAnimes, catalogSearchVisibleCount]);
+
+  useEffect(() => {
+    setCatalogSearchVisibleCount(30);
+  }, [deferredCatalogSearchQuery, selectedStudioId, selectedGenreIds, selectedYear, selectedStatus, selectedRating, sortBy]);
 
   const totalCatalogPages = useMemo(() => {
     return Math.max(1, Math.ceil(sortedAnimes.length / ITEMS_PER_PAGE));
@@ -1749,7 +1754,8 @@ export default function App() {
     selectedYear ||
     selectedStatus ||
     selectedRating ||
-    selectedStudioId
+    selectedStudioId ||
+    sortBy !== 'name-asc'
   );
 
   const isSearchOrFilterActive = Boolean(
@@ -1761,25 +1767,14 @@ export default function App() {
   // --- PUBLIC HOME VIEW & TOP LEVEL PAGES ---
   return (
     <div className={`relative min-h-screen ${currentPage === 'detail' ? 'bg-[#08080a]' : 'bg-dark-bg'} text-white font-sans selection:bg-brand-red selection:text-white flex flex-col overflow-x-hidden border-0 outline-none`}>
-      <AnimatePresence mode="popLayout" custom={navDirection} initial={false}>
+      <AnimatePresence mode="wait" initial={false}>
         {currentPage === 'admin' ? (
           <motion.div
             key="admin"
-            custom={navDirection}
-            initial={(dir: number) => ({
-              opacity: 0,
-              x: dir >= 0 ? '100%' : '-100%'
-            })}
-            animate={{
-              opacity: 1,
-              x: 0
-            }}
-            exit={(dir: number) => ({
-              opacity: 0,
-              x: dir >= 0 ? '-100%' : '100%'
-            })}
-            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-            style={{ willChange: 'transform, opacity' }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
             className="w-full min-h-screen overflow-x-hidden"
           >
             {authLoading ? (
@@ -1807,21 +1802,10 @@ export default function App() {
         ) : currentPage === 'studio' && selectedStudio ? (
           <motion.div
             key={`studio-${selectedStudio.id}`}
-            custom={navDirection}
-            initial={(dir: number) => ({
-              opacity: 0,
-              x: dir >= 0 ? 30 : -30
-            })}
-            animate={{
-              opacity: 1,
-              x: 0
-            }}
-            exit={(dir: number) => ({
-              opacity: 0,
-              x: dir >= 0 ? -30 : 30
-            })}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            style={{ willChange: 'transform, opacity' }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
             className="w-full min-h-screen overflow-x-hidden"
           >
             <StudioDetailModal
@@ -1859,21 +1843,10 @@ export default function App() {
         ) : currentPage === 'detail' && currentAnime ? (
           <motion.div
             key={`detail-${selectedAnimeId}`}
-            custom={navDirection}
-            initial={(dir: number) => ({
-              opacity: 0,
-              x: dir >= 0 ? 30 : -30
-            })}
-            animate={{
-              opacity: 1,
-              x: 0
-            }}
-            exit={(dir: number) => ({
-              opacity: 0,
-              x: dir >= 0 ? -30 : 30
-            })}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            style={{ willChange: 'transform, opacity' }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
             onAnimationComplete={() => setIsDetailAnimating(false)}
             className="w-full min-h-screen overflow-x-hidden"
           >
@@ -1946,48 +1919,29 @@ export default function App() {
             style={{ willChange: 'transform, opacity' }}
             className="w-full min-h-screen flex flex-col"
           >
-            {/* 1. Global Navigation Bar - Compact Dark Violet & Black */}
-            <nav className={`fixed top-0 left-0 right-0 z-50 bg-[#0e091b]/95 backdrop-blur-md py-2.5 sm:py-3 px-4 sm:px-6 lg:px-8 border-none outline-none transition-transform duration-200 ease-out ${
-              isHeaderVisible ? 'translate-y-0' : '-translate-y-full'
+            {/* 1. Global Navigation Bar - Clean transparent overlay on Home, no intrusive sliding bar */}
+            <nav className={`z-50 py-3 sm:py-4 px-3.5 sm:px-6 lg:px-8 border-none outline-none ${
+              currentPage === 'home'
+                ? 'absolute top-0 left-0 right-0 bg-transparent'
+                : 'fixed top-0 left-0 right-0 bg-[#0e091b]/95 backdrop-blur-md shadow-lg shadow-black/60 border-b border-[#2b1747]/40'
             }`}>
-              <div className="max-w-[1500px] 2xl:max-w-[1800px] 3xl:max-w-[2100px] mx-auto flex items-center justify-between">
-                {/* Logo Brand */}
-                <div 
-                  onClick={() => {
-                    // Recargar la página al presionar el título KuzeHentai
-                    window.location.reload();
-                  }}
-                  className="group flex items-center cursor-pointer select-none active:scale-95 transition-transform"
-                  title="Recargar página KuzeHentai"
-                >
-                  <span className="font-display font-black text-xl tracking-widest text-white transition-colors duration-300 group-hover:text-brand-red">
-                    KuzeHentai
-                  </span>
-                </div>
-
-                {/* Desktop Navigation Links */}
-                <div className="hidden md:flex items-center gap-8 font-mono text-[10px] tracking-widest uppercase text-neutral-400">
-                  <a href="#acerca" className="hover:text-white transition-colors duration-300">Acerca de</a>
-                  <a href="https://t.me/kuzehenta" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors duration-300">Colecciones</a>
-                  <a href="https://t.me/kuzehenta" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors duration-300">Contacto</a>
-                </div>
-
+              <div className="max-w-[1500px] 2xl:max-w-[1800px] 3xl:max-w-[2100px] mx-auto flex items-center justify-end">
                 {/* Right Top Auth / User Button */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 sm:gap-2.5">
                   {currentUser ? (
-                    <div className="flex items-center gap-2">
-                      {currentUser.email?.toLowerCase() === 'kuzeofc@gmail.com' && (
+                    <div className="flex items-center gap-2 sm:gap-2.5">
+                      {((currentUser.email?.toLowerCase() === 'kuzeofc@gmail.com') || (typeof window !== 'undefined' && localStorage.getItem('hk_admin_token'))) && (
                         <button
                           type="button"
                           onClick={() => navigateTo('admin')}
-                          className="flex h-9 w-9 items-center justify-center rounded-full bg-[#201733] border border-[#372854] text-white shadow-md transition-all duration-300 hover:border-purple-500/60 active:scale-95 group cursor-pointer"
+                          className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full bg-[#1b102e]/85 hover:bg-[#2b1747] border border-purple-400/40 hover:border-purple-300 text-white shadow-lg backdrop-blur-md transition-all duration-300 active:scale-95 group cursor-pointer"
                           title="Panel de Administración"
                           aria-label="Panel de Administración"
                         >
                           <div className="flex flex-col gap-[3px] items-center justify-center w-4 pointer-events-none">
-                            <div className="h-[2px] w-full bg-[#a3a3b2] rounded-xs group-hover:bg-white transition-colors" />
-                            <div className="h-[2px] w-full bg-[#a3a3b2] rounded-xs group-hover:bg-white transition-colors" />
-                            <div className="h-[2px] w-full bg-[#a3a3b2] rounded-xs group-hover:bg-white transition-colors" />
+                            <div className="h-[2px] w-full bg-purple-200 rounded-xs group-hover:bg-white transition-colors shadow-xs" />
+                            <div className="h-[2px] w-full bg-purple-200 rounded-xs group-hover:bg-white transition-colors shadow-xs" />
+                            <div className="h-[2px] w-full bg-purple-200 rounded-xs group-hover:bg-white transition-colors shadow-xs" />
                           </div>
                         </button>
                       )}
@@ -1996,7 +1950,7 @@ export default function App() {
                       <button 
                         type="button"
                         onClick={() => setIsProfileModalOpen(true)}
-                        className="flex items-center gap-2 rounded-full transition-all duration-300 cursor-pointer active:scale-95 group focus:outline-none"
+                        className="flex items-center gap-2 rounded-full p-0.5 bg-black/40 hover:bg-black/60 border border-white/10 hover:border-purple-400/40 backdrop-blur-md transition-all duration-300 cursor-pointer active:scale-95 group focus:outline-none shadow-lg"
                         title="Toca para ver tu perfil, cambiar nombre, ver Mi Lista o cerrar sesión"
                       >
                         {currentUser.photoURL ? (
@@ -2004,7 +1958,7 @@ export default function App() {
                             src={currentUser.photoURL}
                             alt={currentUser.displayName || 'Foto de perfil'}
                             referrerPolicy="no-referrer"
-                            className="w-10 h-10 rounded-full object-cover shadow-sm shrink-0 group-hover:scale-105 transition-transform"
+                            className="w-9 h-9 sm:w-10 sm:h-10 rounded-full object-cover shadow-sm shrink-0 ring-1 ring-white/20 group-hover:scale-105 transition-transform"
                             onError={(e) => {
                               e.currentTarget.style.display = 'none';
                               const fallback = e.currentTarget.parentElement?.querySelector('.kh-avatar-fallback') as HTMLElement | null;
@@ -2013,11 +1967,11 @@ export default function App() {
                           />
                         ) : null}
                         <div 
-                          className={`kh-avatar-fallback w-10 h-10 rounded-full bg-gradient-to-tr from-purple-800 to-brand-red text-white font-bold text-sm shrink-0 items-center justify-center group-hover:scale-105 transition-transform ${currentUser.photoURL ? 'hidden' : 'flex'}`}
+                          className={`kh-avatar-fallback w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-gradient-to-tr from-purple-800 to-brand-red text-white font-bold text-sm shrink-0 items-center justify-center ring-1 ring-white/20 group-hover:scale-105 transition-transform ${currentUser.photoURL ? 'hidden' : 'flex'}`}
                         >
                           {(currentUser.displayName || currentUser.email || 'U')[0].toUpperCase()}
                         </div>
-                        <span className="hidden sm:inline-block font-mono text-xs text-neutral-200 truncate max-w-[130px] font-medium group-hover:text-white transition-colors">
+                        <span className="hidden sm:inline-block font-mono text-xs text-neutral-200 truncate max-w-[130px] font-medium group-hover:text-white transition-colors drop-shadow px-1">
                           {currentUser.displayName || currentUser.email?.split('@')[0] || 'Usuario'}
                         </span>
                       </button>
@@ -2026,7 +1980,7 @@ export default function App() {
                     <button 
                       type="button"
                       onClick={() => setIsAuthModalOpen(true)}
-                      className="px-3.5 py-1.5 bg-gradient-to-r from-purple-600 to-brand-red hover:from-purple-500 hover:to-brand-red/90 text-white rounded-full text-xs font-medium tracking-wide shadow-md hover:shadow-purple-500/25 transition-all duration-300 flex items-center gap-1.5 cursor-pointer border border-white/10"
+                      className="px-3.5 py-1.5 bg-gradient-to-r from-purple-600 to-brand-red hover:from-purple-500 hover:to-brand-red/90 text-white rounded-full text-xs font-medium tracking-wide shadow-lg hover:shadow-purple-500/25 transition-all duration-300 flex items-center gap-1.5 cursor-pointer border border-white/20 backdrop-blur-md"
                       title="Iniciar sesión"
                     >
                       <LogIn className="h-3.5 w-3.5" />
@@ -2038,7 +1992,9 @@ export default function App() {
             </nav>
 
             {/* 3. Main Search & Explore Gallery Area */}
-            <main id="explorar" className="relative z-10 max-w-[1500px] 2xl:max-w-[1800px] 3xl:max-w-[2100px] mx-auto w-full px-1.5 sm:px-5 lg:px-7 pt-[62px] sm:pt-[68px] pb-3 sm:pb-4 space-y-4 flex-grow">
+            <main id="explorar" className={`relative z-10 max-w-[1500px] 2xl:max-w-[1800px] 3xl:max-w-[2100px] mx-auto w-full px-1.5 sm:px-5 lg:px-7 ${
+              currentPage === 'home' ? 'pt-0' : 'pt-[62px] sm:pt-[68px]'
+            } pb-3 sm:pb-4 space-y-4 flex-grow`}>
               <AnimatePresence mode="popLayout" custom={navDirection} initial={false}>
                 {currentPage === 'my-list' || currentPage === 'watched' ? (
                   <motion.div
@@ -2243,8 +2199,8 @@ export default function App() {
                     transition={{ duration: 0.36, ease: [0.16, 1, 0.3, 1] }}
                     className="space-y-5"
                   >
-        {/* Crunchyroll-Style Hero Banner Carousel for Más Populares */}
-        <section aria-label="Animes Más Populares" className="w-full no-swipe">
+        {/* Crunchyroll-Style Hero Banner Carousel for Más Populares - Extending to the top of the page */}
+        <section aria-label="Animes Más Populares" className="no-swipe -mx-1.5 sm:-mx-5 lg:-mx-7 w-[calc(100%+0.75rem)] sm:w-[calc(100%+2.5rem)] lg:w-[calc(100%+3.5rem)]">
           <PopularHeroCarousel
             animes={heroFeaturedAnimes}
             studios={studios}
@@ -2370,9 +2326,8 @@ export default function App() {
                       loading="eager"
                       className="w-full h-full object-cover object-[center_25%] group-hover:scale-105 transition-transform duration-300"
                     />
-                    {/* Gradient Overlay like Hero Carousel */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-[#090514] via-[#090514]/40 to-transparent pointer-events-none" />
-                    <div className="absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-black/40 to-transparent pointer-events-none" />
+                    {/* Solo difuminado suave abajo en el título */}
+                    <div className="absolute inset-x-0 bottom-0 h-16 sm:h-20 bg-gradient-to-t from-[#090514]/95 via-[#090514]/70 to-transparent pointer-events-none" />
 
                     {/* Solo el título */}
                     <div className="absolute inset-x-0 bottom-0 p-3 sm:p-4 z-10 pointer-events-none">
@@ -2402,7 +2357,7 @@ export default function App() {
               ))}
             </HorizontalSectionRow>
 
-            {/* SECCIÓN 5: PRÓXIMAMENTE (solo se muestra si hay animes en próximamente; si no hay, no se muestra ni el título ni nada) */}
+            {/* SECCIÓN 5: PRÓXIMAMENTE (recuadro grande como Últimos Hentai, solo el nombre sin texto encima) */}
             {upcomingSectionAnimes.length > 0 && (
               <HorizontalSectionRow
                 title="Próximamente"
@@ -2430,16 +2385,10 @@ export default function App() {
                         loading="eager"
                         className="w-full h-full object-cover object-[center_25%] group-hover:scale-105 transition-transform duration-300"
                       />
-                      {/* Gradient Overlay like Hero Carousel */}
-                      <div className="absolute inset-0 bg-gradient-to-t from-[#090514] via-[#090514]/40 to-transparent pointer-events-none" />
-                      <div className="absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-black/40 to-transparent pointer-events-none" />
+                      {/* Solo difuminado suave abajo en el título */}
+                      <div className="absolute inset-x-0 bottom-0 h-16 sm:h-20 bg-gradient-to-t from-[#090514]/95 via-[#090514]/70 to-transparent pointer-events-none" />
 
-                      {/* Tag Próximamente */}
-                      <div className="absolute top-2 left-2 z-10 px-2 py-0.5 rounded-full bg-black/80 backdrop-blur-md border border-purple-400/40 text-[9px] font-mono font-bold text-purple-200 uppercase tracking-wider">
-                        Próximamente
-                      </div>
-
-                      {/* Solo el título */}
+                      {/* Solo el nombre (sin ningún otro texto o etiqueta encima) */}
                       <div className="absolute inset-x-0 bottom-0 p-3 sm:p-4 z-10 pointer-events-none">
                         <p className="font-display font-bold text-sm sm:text-base md:text-[17px] text-white tracking-tight leading-snug drop-shadow truncate group-hover:text-purple-300 transition-colors">
                           {anime.name}
@@ -2481,13 +2430,10 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       setIsCatalogSearchOpen(true);
-                      setTimeout(() => {
+                      setCatalogSearchVisibleCount(30);
+                      requestAnimationFrame(() => {
                         catalogSearchInputRef.current?.focus();
-                        const el = document.getElementById('seccion-catalogo-search-container');
-                        if (el) {
-                          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        }
-                      }, 100);
+                      });
                     }}
                     className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border bg-[#150a26] border-[#2b1747] text-purple-300 hover:text-white hover:border-purple-500/60 text-xs font-mono transition-all duration-200 cursor-pointer active:scale-95"
                     title="Buscar en el catálogo"
@@ -2577,6 +2523,17 @@ export default function App() {
                 {hasActiveFilters && (
                   <div className="flex flex-wrap items-center gap-2 pt-0.5">
                     <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest mr-1">Filtros:</span>
+                    {sortBy !== 'name-asc' && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-purple-500/20 border border-purple-500/50 rounded-full text-[11px] text-purple-300 font-mono">
+                        {sortBy === 'recientes' ? 'Más Recientes' :
+                         sortBy === 'rating-desc' ? 'Mejor Calificados' :
+                         sortBy === 'rating-asc' ? 'Menos Calificados' :
+                         sortBy === 'name-desc' ? 'Nombre (Z - A)' :
+                         sortBy === 'year-desc' ? 'Año reciente' :
+                         sortBy === 'year-asc' ? 'Año antiguo' : sortBy}
+                        <button onClick={() => setSortBy('name-asc')}><X className="h-3 w-3" /></button>
+                      </span>
+                    )}
                     {selectedRating && (
                       <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-[#ff5588]/15 border border-[#ff5588]/40 rounded-full text-[11px] text-[#ff5588] font-mono">
                         {selectedRating === '0' ? 'Sin votos' : `${selectedRating}★`}
@@ -2595,6 +2552,12 @@ export default function App() {
                         <button onClick={() => setSelectedStatus('')}><X className="h-3 w-3" /></button>
                       </span>
                     )}
+                    {selectedStudioId && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-purple-500/20 border border-purple-500/50 rounded-full text-[11px] text-purple-300 font-mono">
+                        {studios.find(s => s.id === selectedStudioId)?.name || 'Estudio'}
+                        <button onClick={() => setSelectedStudioId('')}><X className="h-3 w-3" /></button>
+                      </span>
+                    )}
                   </div>
                 )}
 
@@ -2606,18 +2569,31 @@ export default function App() {
                     <p className="font-sans text-xs text-neutral-400">Intenta con otro término de búsqueda o limpia los filtros.</p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-0.5 sm:gap-1">
-                    {catalogSearchSectionAnimes.map((anime, idx) => (
-                      <GalleryCard
-                        key={`cat-search-${anime.id}`}
-                        anime={anime}
-                        studios={studios}
-                        index={idx}
-                        isNewEpisodesMode={false}
-                        onClick={() => navigateTo('detail', anime.id)}
-                      />
-                    ))}
-                  </div>
+                  <>
+                    <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-0.5 sm:gap-1">
+                      {displayedCatalogSearchAnimes.map((anime, idx) => (
+                        <GalleryCard
+                          key={`cat-search-${anime.id}`}
+                          anime={anime}
+                          studios={studios}
+                          index={idx}
+                          isNewEpisodesMode={false}
+                          onClick={() => navigateTo('detail', anime.id)}
+                        />
+                      ))}
+                    </div>
+                    {catalogSearchSectionAnimes.length > catalogSearchVisibleCount && (
+                      <div className="pt-4 pb-2 text-center">
+                        <button
+                          type="button"
+                          onClick={() => setCatalogSearchVisibleCount(prev => prev + 30)}
+                          className="px-6 py-2.5 rounded-xl border border-purple-500/40 bg-[#160a28] hover:bg-[#230f3f] text-purple-300 hover:text-white text-xs font-mono transition-all duration-200 shadow-lg cursor-pointer active:scale-95"
+                        >
+                          Cargar más animes ({catalogSearchSectionAnimes.length - catalogSearchVisibleCount} restantes)
+                        </button>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}

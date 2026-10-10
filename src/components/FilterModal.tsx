@@ -31,10 +31,10 @@ export interface FilterModalProps {
 }
 
 const SORT_OPTIONS = [
+  { id: 'name-asc', label: 'Nombre (A - Z)' },
   { id: 'recientes', label: 'Más Recientes' },
   { id: 'rating-desc', label: 'Mejor Calificados' },
   { id: 'rating-asc', label: 'Menos Calificados' },
-  { id: 'name-asc', label: 'Nombre (A - Z)' },
   { id: 'name-desc', label: 'Nombre (Z - A)' },
   { id: 'year-desc', label: 'Año (Más Reciente)' },
   { id: 'year-asc', label: 'Año (Más Antiguo)' },
@@ -116,7 +116,7 @@ function FilterModal({
 
   const hasActiveFilters =
     selectedRating !== '' ||
-    sortBy !== 'recientes' ||
+    sortBy !== 'name-asc' ||
     extraActiveCount > 0;
 
   return (

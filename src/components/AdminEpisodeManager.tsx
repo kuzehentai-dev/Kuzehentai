@@ -386,7 +386,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
                 autoFocus
               />
               {tempImageUrl && (
-                <div className="aspect-video w-full rounded-lg overflow-hidden border border-purple-950/80 bg-black">
+                <div className="aspect-square w-28 h-28 mx-auto rounded-lg overflow-hidden border border-purple-950/80 bg-black">
                   <img
                     src={tempImageUrl}
                     alt="Preview"
@@ -685,18 +685,18 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
                   Miniatura del Episodio:
                 </label>
                 <span className="text-[10px] font-mono text-purple-400 bg-purple-950/60 px-2 py-0.5 rounded border border-purple-900/40">
-                  Formato rectangular (16:9)
+                  Cuadrito (1:1)
                 </span>
               </div>
 
               <div className="bg-[#07050d] border border-purple-950 rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row items-center sm:items-start gap-4 sm:gap-5">
-                {/* Thumbnail Preview (Rectangular 16:9 con el mismo estilo que en un anime) */}
+                {/* Thumbnail Preview: cuadrito compacto cuadrado */}
                 <div
                   onDragOver={(e) => { e.preventDefault(); setIsDraggingThumb(true); }}
                   onDragLeave={() => setIsDraggingThumb(false)}
                   onDrop={handleThumbDrop}
                   onClick={handleTriggerThumbUpload}
-                  className={`aspect-video w-48 sm:w-56 rounded-xl border cursor-pointer group bg-black/50 flex flex-col items-center justify-center p-2 overflow-hidden relative transition-all duration-300 shrink-0 shadow-lg ${
+                  className={`aspect-square w-24 h-24 sm:w-28 sm:h-28 rounded-xl border cursor-pointer group bg-black/50 flex flex-col items-center justify-center p-1.5 overflow-hidden relative transition-all duration-300 shrink-0 shadow-lg ${
                     isDraggingThumb
                       ? 'border-purple-500 bg-purple-950/20'
                       : 'border-purple-900/60 hover:border-purple-500/70'
@@ -712,15 +712,14 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
                         referrerPolicy="no-referrer"
                       />
                       {editingEpisode.thumbnail.startsWith('data:image/') && (
-                        <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/75 backdrop-blur-xs border border-purple-500/40 text-[8.5px] font-mono text-purple-300 z-10 font-bold tracking-tight flex items-center gap-1">
+                        <div className="absolute top-1 left-1 px-1 py-0.5 rounded bg-black/75 backdrop-blur-xs border border-purple-500/40 text-[7.5px] font-mono text-purple-300 z-10 font-bold tracking-tight flex items-center gap-0.5">
                           <span>~{Math.round(editingEpisode.thumbnail.length * 0.75 / 1024)} KB</span>
-                          <span className="opacity-75">· {editingEpisode.thumbnail.includes('webp') ? 'WebP' : editingEpisode.thumbnail.includes('png') ? 'PNG' : 'JPG'}</span>
                         </div>
                       )}
-                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-2 z-10">
-                        <Upload className="h-6 w-6 text-white animate-bounce" />
-                        <span className="font-mono text-[9px] text-white uppercase tracking-wider text-center px-1">
-                          Subir otra miniatura
+                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-1 z-10">
+                        <Upload className="h-5 w-5 text-white animate-bounce" />
+                        <span className="font-mono text-[8px] text-white uppercase tracking-wider text-center px-1">
+                          Cambiar
                         </span>
                       </div>
                       <button
@@ -729,17 +728,17 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
                           e.stopPropagation();
                           setEditingEpisode(prev => prev ? { ...prev, thumbnail: undefined } : null);
                         }}
-                        className="absolute bottom-2 right-2 p-1 px-2 bg-black/80 hover:bg-brand-red text-white text-[9px] font-mono rounded z-10 transition-colors"
+                        className="absolute bottom-1 right-1 p-0.5 px-1.5 bg-black/85 hover:bg-brand-red text-white text-[8px] font-mono rounded z-10 transition-colors"
                         title="Quitar miniatura"
                       >
-                        Eliminar
+                        ✕
                       </button>
                     </>
                   ) : (
-                    <div className="text-center p-3 flex flex-col items-center gap-2 text-neutral-500 group-hover:text-purple-300 transition-colors">
-                      <Upload className="h-7 w-7 text-purple-600/60 group-hover:text-purple-400 transition-colors" />
-                      <span className="font-mono text-[9px] uppercase tracking-wider leading-tight text-center">
-                        Arrastra o haz clic para subir miniatura
+                    <div className="text-center p-2 flex flex-col items-center gap-1.5 text-neutral-500 group-hover:text-purple-300 transition-colors">
+                      <Upload className="h-6 w-6 text-purple-600/60 group-hover:text-purple-400 transition-colors" />
+                      <span className="font-mono text-[8.5px] uppercase tracking-wider leading-tight text-center">
+                        Subir miniatura
                       </span>
                     </div>
                   )}
@@ -750,7 +749,7 @@ export const AdminEpisodeManager: React.FC<AdminEpisodeManagerProps> = ({
                   <p className="text-xs text-neutral-300 font-sans">
                     {editingEpisode.thumbnail
                       ? 'Tiene una miniatura personalizada para la sección de episodios, la vista del anime y el reproductor.'
-                      : 'Puedes subir una miniatura rectangular (16:9) o ingresar una URL. Si no agregas una, se usará la imagen del anime.'}
+                      : 'Puedes subir una imagen para la miniatura o ingresar una URL. Si no agregas una, se usará la imagen del anime.'}
                   </p>
 
                   <div className="flex flex-wrap items-center gap-2">

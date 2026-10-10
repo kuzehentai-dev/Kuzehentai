@@ -199,7 +199,7 @@ export default function PopularHeroCarousel({
 
   if (loading) {
     return (
-      <div className="w-full relative rounded-2xl sm:rounded-3xl overflow-hidden bg-[#0a0515] border border-[#2b1747]/60 aspect-[4/5.5] xs:aspect-[3/4.5] sm:aspect-[16/11.8] md:aspect-[16/10.2] lg:aspect-[16/9] min-h-[530px] sm:min-h-[595px] md:min-h-[625px] max-h-[750px] animate-pulse no-swipe">
+      <div className="w-full relative rounded-t-none rounded-b-2xl sm:rounded-b-3xl overflow-hidden bg-[#0a0515] border-t-0 border-x border-b border-[#2b1747]/60 aspect-[4/5.9] xs:aspect-[3/4.8] sm:aspect-[16/12.8] md:aspect-[16/11.2] lg:aspect-[16/9.8] min-h-[575px] sm:min-h-[645px] md:min-h-[680px] max-h-[820px] animate-pulse no-swipe">
         <div className="absolute inset-0 bg-gradient-to-t from-[#090514] via-[#090514]/30 to-transparent" />
         <div className="absolute bottom-5 left-5 right-5 space-y-2">
           <div className="h-6 w-52 bg-white/10 rounded-lg" />
@@ -230,7 +230,7 @@ export default function PopularHeroCarousel({
     >
       {/* Crunchyroll-Style Hero Banner Card */}
       <div
-        className="relative w-full rounded-2xl sm:rounded-3xl overflow-hidden bg-[#0a0515] border border-[#2b1747] shadow-xl shadow-black/70 aspect-[4/5.5] xs:aspect-[3/4.5] sm:aspect-[16/11.8] md:aspect-[16/10.2] lg:aspect-[16/9] min-h-[530px] sm:min-h-[595px] md:min-h-[625px] max-h-[750px] flex flex-col justify-end touch-pan-y cursor-pointer no-swipe"
+        className="relative w-full rounded-t-none rounded-b-2xl sm:rounded-b-3xl overflow-hidden bg-[#0a0515] border-t-0 border-x border-b border-[#2b1747] shadow-xl shadow-black/70 aspect-[4/5.9] xs:aspect-[3/4.8] sm:aspect-[16/12.8] md:aspect-[16/11.2] lg:aspect-[16/9.8] min-h-[575px] sm:min-h-[645px] md:min-h-[680px] max-h-[820px] flex flex-col justify-end touch-pan-y cursor-pointer no-swipe"
         onClick={handleCardClick}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -255,14 +255,12 @@ export default function PopularHeroCarousel({
               alt={currentAnime.name}
               priority={true}
               loading="eager"
-              className="w-full h-full object-cover object-[center_top] sm:object-[center_15%]"
+              className="w-full h-full object-cover object-[center_top] sm:object-[center_12%]"
             />
           </motion.div>
         </AnimatePresence>
 
         {/* Soft, Transparent Overlays */}
-        {/* Top gradient to give contrast to top bar / icons */}
-        <div className="absolute inset-x-0 top-0 h-28 sm:h-36 bg-gradient-to-b from-black/80 via-black/40 to-transparent pointer-events-none z-[5]" />
         {/* Bottom smooth gradient for high poster clarity and text readability */}
         <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-[#090514] via-[#090514]/75 to-transparent pointer-events-none z-[5]" />
         {/* Subtle left side vignette for wide desktop displays */}

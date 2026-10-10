@@ -85,15 +85,25 @@ export default function StudioDetailModal({
     }, 0);
   }, [studioAnimes]);
 
+  // Cache ratings for all studio animes once to avoid repeated computation during sorts
+  const ratingsCache = useMemo(() => {
+    const map = new Map<string, { average: number; totalVotes: number }>();
+    studioAnimes.forEach(a => {
+      const stats = getAnimeRatingStats(a.id);
+      map.set(a.id, { average: stats?.average || 0, totalVotes: stats?.totalVotes || 0 });
+    });
+    return map;
+  }, [studioAnimes]);
+
   // Overall average rating across all animes of this studio (scale of 1 to 5 stars)
   const overallAverage = useMemo(() => {
     if (totalVotes === 0) return 0;
     const totalWeighted = studioAnimes.reduce((sum, a) => {
-      const stats = getAnimeRatingStats(a.id);
+      const stats = ratingsCache.get(a.id);
       return sum + ((stats?.average || 0) * (stats?.totalVotes || 0));
     }, 0);
     return totalWeighted / totalVotes;
-  }, [studioAnimes, totalVotes]);
+  }, [studioAnimes, totalVotes, ratingsCache]);
 
   // Studio cover image: studio.image or first anime cover
   const studioCover = studio.image || studioAnimes[0]?.coverData || studioAnimes[0]?.image;
@@ -127,24 +137,20 @@ export default function StudioDetailModal({
         return b.name.localeCompare(a.name, 'es', { sensitivity: 'base' });
       }
       if (sortBy === 'rating-desc') {
-        const ratingA = getAnimeRatingStats(a.id)?.average || 0;
-        const ratingB = getAnimeRatingStats(b.id)?.average || 0;
-        if (ratingB !== ratingA) return ratingB - ratingA;
-        const votesA = getAnimeRatingStats(a.id)?.totalVotes || 0;
-        const votesB = getAnimeRatingStats(b.id)?.totalVotes || 0;
-        return votesB - votesA;
+        const rA = ratingsCache.get(a.id) || { average: 0, totalVotes: 0 };
+        const rB = ratingsCache.get(b.id) || { average: 0, totalVotes: 0 };
+        if (rB.average !== rA.average) return rB.average - rA.average;
+        return rB.totalVotes - rA.totalVotes;
       }
       if (sortBy === 'rating-asc') {
-        const ratingA = getAnimeRatingStats(a.id)?.average || 0;
-        const ratingB = getAnimeRatingStats(b.id)?.average || 0;
-        if (ratingA !== ratingB) return ratingA - ratingB;
-        const votesA = getAnimeRatingStats(a.id)?.totalVotes || 0;
-        const votesB = getAnimeRatingStats(b.id)?.totalVotes || 0;
-        return votesA - votesB;
+        const rA = ratingsCache.get(a.id) || { average: 0, totalVotes: 0 };
+        const rB = ratingsCache.get(b.id) || { average: 0, totalVotes: 0 };
+        if (rA.average !== rB.average) return rA.average - rB.average;
+        return rA.totalVotes - rB.totalVotes;
       }
       return 0;
     });
-  }, [studioAnimes, sortBy]);
+  }, [studioAnimes, sortBy, ratingsCache]);
 
   // Pagination calculations (30 items per page)
   const totalPages = Math.ceil(sortedStudioAnimes.length / ITEMS_PER_PAGE);

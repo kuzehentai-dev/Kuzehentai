@@ -4005,6 +4005,10 @@ async function start() {
     console.log(`🚀 Servidor KuzeHentai iniciado exitosamente en el puerto ${PORT}`);
   });
 
+  server.on('error', (err: any) => {
+    console.error('Server listen error:', err);
+  });
+
   // Handle graceful shutdown for Cloud Run container lifecycle
   process.on('SIGTERM', () => {
     console.log('Received SIGTERM, shutting down gracefully...');
@@ -4012,7 +4016,22 @@ async function start() {
       process.exit(0);
     });
   });
+
+  process.on('SIGINT', () => {
+    console.log('Received SIGINT, shutting down gracefully...');
+    server.close(() => {
+      process.exit(0);
+    });
+  });
 }
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.warn('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
 
 start().catch((err) => {
   console.error('Fatal error starting server:', err);
